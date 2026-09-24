@@ -349,6 +349,11 @@ static void TelnetSendTType(void)
 {
     UBYTE start[] = { IAC, SB, TELOPT_TTYPE, TELQUAL_IS };
     UBYTE   end[] = { IAC, SE };
+    // PETSCII mode identifies itself as "PETSCII" over TTYPE so a
+    // PETSCII-aware BBS (classifyTerminalType()-style detection) can
+    // auto-flip into its native mode, independent of the user's normal
+    // displayidstr (VT102/ANSI/etc. for non-PETSCII sessions).
+    const char *ttypeString = (prefs.flags & FLAG_PETSCII_MODE) ? "PETSCII" : prefs.displayidstr;
 
     // Only send terminal type if the option was successfully negotiated with the telnet server
     if (telnetCtx.optState[TELOPT_TTYPE].us != YES)
@@ -356,12 +361,12 @@ static void TelnetSendTType(void)
 
     #ifdef _DEBUG
             PutStr("›35m»IAC SB TELOPT_TTYPE TELQUAL_IS ");
-            PutStr(prefs.displayidstr);
+            PutStr(ttypeString);
             PutStr(" IAC SE›m\n");
     #endif
 
     TCPSend(start, sizeof(start));
-    TCPSend(prefs.displayidstr, strlen(prefs.displayidstr));
+    TCPSend(ttypeString, strlen(ttypeString));
     TCPSend(end, sizeof(end));
 }
 

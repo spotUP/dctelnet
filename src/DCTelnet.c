@@ -47,6 +47,8 @@ static char MainWindowTitle[] =
 #include <proto/reqtools.h>           // rtAllocRequestA() rtScreenModeRequest() rtPaletteRequestA()
 #include <proto/socket.h>             // send(), <CloseSocket>()
 #include <arpa/telnet.h>
+#include "petscii_dispatch.h"
+#include "petscii_keymap.h"
 #ifdef __VBCC__
     #pragma popwarn
 #endif
@@ -128,6 +130,7 @@ static struct NewMenu mainMenuDesc[] =
     {    NM_ITEM, "Local Echoback",                 "6", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_LOCAL_ECHOBACK},
     {    NM_ITEM, "Raw Connection",                 "7", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_RAW_CONNECTION},
     {    NM_ITEM, "Jump Scroll",                    "8", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_JUMP_SCROLL},
+    {    NM_ITEM, "PETSCII Mode",                    "9", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_PETSCII_MODE},
 
     { NM_TITLE, "Settings",                          0 ,             0,               0, (APTR)MENU_SETTINGS},
     {    NM_ITEM, "Screen Mode..",                  "S",             0,               0, (APTR)MENU_SCREEN_MODE},
@@ -174,6 +177,8 @@ static struct Gadget screenToBackGadget; // In top right corner when title bar i
 struct NewGadget newGadget;
 static struct TextAttr fontAttr;    // describes the desired font
 struct TextFont *ansiFont;          // actual font loaded via OpenFont(), ready to use
+static struct TextFont *petsciiFont = NULL;      // upper/graphics charset font
+static struct TextFont *petsciiFontLower = NULL; // shifted/lowercase charset font
 static BOOL isConDeviceOpened = FALSE;
 static struct IOStdReq *writeConsoleReq = NULL;
 static struct MsgPort  *writeConsoleMP  = NULL;
@@ -207,6 +212,7 @@ char username[42], password[42];
 // TCP Receive buffer, used in Receive(), xpr_sflush(). Cauntion: these functs destroy the content
 UBYTE recvBuffer[4096];
 unsigned char buf[2048];
+struct PetsciiDispatchState g_petsciiState;
 TEXT fKeys[F_KEY_COUNT * F_KEY_SIZE];
 static unsigned char conbuf[16], scrollbuf[402];
 char server[64];
@@ -869,10 +875,47 @@ static void Receive(void)
 
         if (outLen > 0)
         {
-            ConWrite(outBuffer, outLen);
+            if (prefs.flags & FLAG_PETSCII_MODE)
+            {
+                /* Translated in chunks sized so even the worst-case expansion
+                 * (PETSCII_MAX_OUT_PER_BYTE) fits: output is never truncated. */
+                static UBYTE petsciiOut[sizeof(recvBuffer)];
+                const LONG chunkMax = sizeof(petsciiOut) / PETSCII_MAX_OUT_PER_BYTE;
+                LONG done;
 
-            if(!(prefs.flags & FLAG_DISABLE_SCROLLBACK))
-                AddBuf(outBuffer, outLen);
+                for (done = 0; done < outLen; done += chunkMax)
+                {
+                    LONG chunk = (outLen - done < chunkMax) ? outLen - done : chunkMax;
+                    LONG petsciiOutLen;
+
+                    if (petsciiFont) {
+                        petsciiOutLen = (LONG)petscii_stream_to_rawglyphs(&g_petsciiState,
+                                                                             outBuffer + done, (size_t)chunk,
+                                                                             petsciiOut, sizeof(petsciiOut));
+                        /* Charset-shift control code (14/142) toggles between the
+                         * upper/graphics and shifted/lowercase C64 charsets --
+                         * swap the active console font to match. */
+                        if (win && petsciiFontLower) {
+                            struct TextFont *wanted = g_petsciiState.shift_lowercase ? petsciiFontLower : petsciiFont;
+                            if (win->RPort->Font != wanted) SetFont(win->RPort, wanted);
+                        }
+                    } else {
+                        petsciiOutLen = (LONG)petscii_stream_to_ansi(&g_petsciiState,
+                                                                      outBuffer + done, (size_t)chunk,
+                                                                      petsciiOut, sizeof(petsciiOut));
+                    }
+                    ConWrite((char *)petsciiOut, petsciiOutLen);
+                    if(!(prefs.flags & FLAG_DISABLE_SCROLLBACK))
+                        AddBuf((char *)petsciiOut, petsciiOutLen);
+                }
+            }
+            else
+            {
+                ConWrite(outBuffer, outLen);
+
+                if(!(prefs.flags & FLAG_DISABLE_SCROLLBACK))
+                    AddBuf(outBuffer, outLen);
+            }
         }
 
         // Detect end of the server's initial negotiation sequence. Trigger client-side negotiation
@@ -2027,13 +2070,39 @@ static void GetWindowMsg(struct Window *wwin)
                             if(key_csi)
                             {
                                 key_csi = FALSE;
-                                if (conbuf[i] >= '0' && conbuf[i] <= '9')
+                                if (conbuf[i] >= '0' && conbuf[i] <= '9' && !(prefs.flags & FLAG_PETSCII_MODE))
                                 {
                                     key_macro = TRUE;
                                     SendMacro(&fKeys[(conbuf[i] - '0') * F_KEY_SIZE]);
                                 }
+                                /* PETSCII mode: F1-F8 send the real PETSCII
+                                 * function-key bytes instead of triggering a
+                                 * user macro -- Amiga's console CSI encodes
+                                 * F1-F10 as ESC [ <digit> per the digit branch
+                                 * above (0-9); only 1-8 have a PETSCII
+                                 * counterpart (F9/F10/F0 have none). */
+                                else if ((prefs.flags & FLAG_PETSCII_MODE)
+                                         && conbuf[i] >= '1' && conbuf[i] <= '8')
+                                {
+                                    static const int fkeys[8] = {
+                                        PETSCII_KEY_F1, PETSCII_KEY_F2, PETSCII_KEY_F3, PETSCII_KEY_F4,
+                                        PETSCII_KEY_F5, PETSCII_KEY_F6, PETSCII_KEY_F7, PETSCII_KEY_F8
+                                    };
+                                    key_macro = TRUE;
+                                    OutKey((unsigned char)petscii_translate_key(fkeys[conbuf[i] - '1'], 1));
+                                }
 
-                                switch(conbuf[i])
+                                if (prefs.flags & FLAG_PETSCII_MODE)
+                                {
+                                    switch(conbuf[i])
+                                    {
+                                    case 'A': OutKey((unsigned char)petscii_translate_key(PETSCII_KEY_UP, 1));    break;
+                                    case 'B': OutKey((unsigned char)petscii_translate_key(PETSCII_KEY_DOWN, 1));  break;
+                                    case 'C': OutKey((unsigned char)petscii_translate_key(PETSCII_KEY_RIGHT, 1)); break;
+                                    case 'D': OutKey((unsigned char)petscii_translate_key(PETSCII_KEY_LEFT, 1));  break;
+                                    }
+                                }
+                                else switch(conbuf[i])
                                 {
                                 case 'A':
                                     SendMisc(ESC_STR "[A", 3);
@@ -2054,7 +2123,15 @@ static void GetWindowMsg(struct Window *wwin)
                                     key_macro = FALSE;
                                 else
                                 {
-                                    OutKey(conbuf[i]);
+                                    if ((prefs.flags & FLAG_PETSCII_MODE) && (conbuf[i] == DEL_CHAR || conbuf[i] == '\b'))
+                                        /* PETSCII's own DEL byte (20), not ASCII BS/DEL --
+                                         * FLAG_BS_DEL_SWAP is an ASCII-only concept and
+                                         * does not apply here. */
+                                        OutKey((unsigned char)petscii_translate_key(PETSCII_KEY_DEL, 1));
+                                    else if ((prefs.flags & FLAG_PETSCII_MODE) && conbuf[i] != '\r')
+                                        OutKey((unsigned char)petscii_translate_key(conbuf[i], 0));
+                                    else
+                                        OutKey(conbuf[i]);
                                     if(conbuf[i] == '\r' && (prefs.flags & FLAG_RETURN_CRLF)) OutKey('\n');
                                 }
                             }
@@ -2301,6 +2378,17 @@ static void GetWindowMsg(struct Window *wwin)
                         UpdatePrefsFlagFromMenu(item, FLAG_JUMP_SCROLL);
                         if(!isRunningOnWB && !(prefs.flags & FLAG_USE_XEM_LIBRARY))
                             shouldRestart = TRUE;
+                        break;
+
+                    case MENU_PETSCII_MODE:
+                        UpdatePrefsFlagFromMenu(item, FLAG_PETSCII_MODE);
+                        petscii_dispatch_init(&g_petsciiState, 40, 25);
+                        /* The console device fixes its cell size from the RastPort
+                         * font at OpenDevice() time, so a font swap needs the same
+                         * close/reopen as MENU_SCREEN_FONT -- OpenAppScreen() picks
+                         * the PETSCII fonts from FLAG_PETSCII_MODE. */
+                        shouldRestart = TRUE;
+                        shouldReopenScreen = TRUE;
                         break;
 
                     case MENU_SCREEN_MODE:
@@ -2669,6 +2757,14 @@ static UWORD EstablishTCPConnection(char *servername, UWORD port)
 
     conectionTime = mytime();
 
+    /* Fresh C64 screen per connection. Without this a start with PETSCII
+     * mode already saved in prefs ran on a zeroed state (cols = 0), so
+     * every printable byte "wrapped" and got its own line. */
+    petscii_dispatch_init(&g_petsciiState, 40, 25);
+    if ((prefs.flags & FLAG_PETSCII_MODE) && !petsciiFont)
+        LocalPrint("\r\nPETSCII Mode: Petscii.font not found in FONTS: or PROGDIR:Fonts/, "
+                   "showing CP437 lookalikes.\r\n");
+
     isConnected = TRUE;
 
     LEDs();
@@ -2676,6 +2772,30 @@ static UWORD EstablishTCPConnection(char *servername, UWORD port)
     return(0);
 }
 
+
+/**
+ * @brief Open a PETSCII font from FONTS:, else from the Fonts drawer next to the program.
+ *
+ * The release archive carries Petscii.font/PetsciiLower.font in DCTelnet/Fonts/, and not every
+ * user copies them into FONTS:. diskfont.library accepts a path in ta_Name.
+ */
+static struct TextFont *OpenPetsciiFont(STRPTR name, STRPTR progdirPath)
+{
+    struct TextAttr attr;
+    struct TextFont *font;
+
+    attr.ta_Name  = name;
+    attr.ta_YSize = 8;
+    attr.ta_Style = FS_NORMAL;
+    attr.ta_Flags = 0;
+    font = OpenDiskFont(&attr);
+    if (!font)
+    {
+        attr.ta_Name = progdirPath;
+        font = OpenDiskFont(&attr);
+    }
+    return font;
+}
 
 struct Screen* OpenAppScreen(void)
 {
@@ -2692,6 +2812,17 @@ struct Screen* OpenAppScreen(void)
         fontAttr.ta_Name = "topaz.font";
         fontAttr.ta_YSize = 8;
         ansiFont = OpenFont(&fontAttr);
+    }
+
+    if (prefs.flags & FLAG_PETSCII_MODE)
+    {
+        /* Petscii/PetsciiLower.font: real C64 glyphs indexed by raw PETSCII
+         * byte, double-width (16x8) cells so 40 columns fill roughly the
+         * physical width the normal 80-column font needs. Not installed:
+         * both stay NULL and Receive() renders CP437 lookalikes instead. */
+        petsciiFont = OpenPetsciiFont("Petscii.font", "PROGDIR:Fonts/Petscii.font");
+        petsciiFontLower = petsciiFont
+            ? OpenPetsciiFont("PetsciiLower.font", "PROGDIR:Fonts/PetsciiLower.font") : NULL;
     }
 
     if (isRunningOnWB)
@@ -2880,7 +3011,7 @@ void OpenAppWindow(void)
         win = OpenWindow(&newWin);
     }
 
-    SetFont(win->RPort, ansiFont);
+    SetFont(win->RPort, petsciiFont ? petsciiFont : ansiFont);
 }
 
 void CreateAppMenus(void)
@@ -2926,6 +3057,7 @@ void CreateAppMenus(void)
     SetNewMenuCheckFromPref(MENU_LOCAL_ECHOBACK,       FLAG_LOCAL_ECHO);
     SetNewMenuCheckFromPref(MENU_RAW_CONNECTION,       FLAG_RAW_CONNECTION);
     SetNewMenuCheckFromPref(MENU_JUMP_SCROLL,          FLAG_JUMP_SCROLL);
+    SetNewMenuCheckFromPref(MENU_PETSCII_MODE,         FLAG_PETSCII_MODE);
 
 
     // Gadtools CreateMenuA() generates a list of Intuition Menu structs.
@@ -3113,6 +3245,10 @@ BOOL OpenDisplay(void)
 
     isAppIconified = FALSE;
 
+    /* After isAppIconified is cleared: ConWrite() drops writes while it is set. */
+    if (isConDeviceOpened && (prefs.flags & FLAG_PETSCII_MODE))
+        ConWrite(PETSCII_CONSOLE_SETUP, sizeof(PETSCII_CONSOLE_SETUP) - 1);
+
     LEDs();
 
     if(!isConnected)
@@ -3298,6 +3434,8 @@ void CloseDisplay(BOOL manageScreen)
             scr = NULL;
         }
         if(ansiFont)              { CloseFont(ansiFont);                ansiFont = NULL; }
+        if(petsciiFont)           { CloseFont(petsciiFont);             petsciiFont = NULL; }
+        if(petsciiFontLower)      { CloseFont(petsciiFontLower);        petsciiFontLower = NULL; }
     }
 
     isAppIconified = TRUE;

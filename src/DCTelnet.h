@@ -54,6 +54,7 @@ struct PrefsStruct
 #define FLAG_LOCAL_ECHO          (1UL << 12)  // BIT 12 = Local Echoback
 #define FLAG_RAW_CONNECTION      (1UL << 13)  // BIT 13 = Raw Connection (NO telnet negotiation data)
 #define FLAG_JUMP_SCROLL         (1UL << 14)  // BIT 14 = Jump Scroll
+#define FLAG_PETSCII_MODE        (1UL << 15)  // BIT 15 = PETSCII emulation (C64/C128)
 
 
 // ID of the gadget in top right corner when title bar is hidden in full screen
@@ -110,6 +111,7 @@ enum MenuItemID
     MENU_LOCAL_ECHOBACK,
     MENU_RAW_CONNECTION,
     MENU_JUMP_SCROLL,
+    MENU_PETSCII_MODE,
 
     MENU_SETTINGS,
     MENU_SCREEN_MODE,
