@@ -1005,12 +1005,13 @@ clean_and_return:
  * @return FALSE if the requester was cancelled, an error occurred, or the selected mode is not
  *         available on the system.
  *
- * @note The requester is currently limited to a maximum depth of 4 bitplanes (16 colors).
+ * @note maxDepth caps the offered depths (4 = 16 colours, 8 = 256).
  *
  * @note All pointer parameters are mandatory and must be non-NULL.
  */
 BOOL ScreenModeRequester(struct Window *parent, ULONG* displayID,
-                         UWORD* displayWidth, UWORD* displayHeight, UWORD* displayDepth)
+                         UWORD* displayWidth, UWORD* displayHeight, UWORD* displayDepth,
+                         UWORD maxDepth)
 {
     struct ScreenModeRequester *sr = NULL;
     BOOL  result = FALSE;
@@ -1048,7 +1049,7 @@ BOOL ScreenModeRequester(struct Window *parent, ULONG* displayID,
                         ASLSM_DoHeight,       TRUE,
                         ASLSM_DoDepth,        TRUE,
                         ASLSM_MinWidth,       640,
-                        ASLSM_MaxDepth,       4,    // Limit to 4 bitplanes (16 colors) sreen modes
+                        ASLSM_MaxDepth,       maxDepth,
 
                         TAG_DONE);
 

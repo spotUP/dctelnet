@@ -696,6 +696,18 @@ static BOOL InitializeReqToolsLib(ULONG reqtoolsTags[5])
     return result;
 }
 
+/* Deepest depth the screen-mode requesters may offer: 256 colours need
+ * V39+ for LoadRGB32/GetRGB32, and the binary-only XEM library stays
+ * on depth<=4. */
+static UWORD ScreenMaxDepth(void)
+{
+    if (prefs.flags & FLAG_USE_XEM_LIBRARY)
+        return 4;
+    if (GfxBase != NULL && GfxBase->LibNode.lib_Version >= 39)
+        return 8;
+    return 4;
+}
+
 static BOOL ChooseScreen(char firsttime)
 {
     BOOL result = FALSE;
@@ -711,7 +723,8 @@ static BOOL ChooseScreen(char firsttime)
     if (AslBase && AslBase->lib_Version >= 38) // ASL screen mode requester introduced with AmigaOS 2.1
     {
         result = ScreenModeRequester(isRunningOnWB ? NULL : win, &prefs.DisplayID,
-                                    &prefs.DisplayWidth, &prefs.DisplayHeight, &prefs.DisplayDepth);
+                                    &prefs.DisplayWidth, &prefs.DisplayHeight, &prefs.DisplayDepth,
+                                    ScreenMaxDepth());
     }
     else    // fallback to legacy ReqTools library
     {
@@ -737,7 +750,7 @@ static BOOL ChooseScreen(char firsttime)
             if (rtScreenModeRequest (scrmodereq, "Screen Mode..",
                                      RT_Window,    win,
                                      RTSC_Flags,    SCREQF_DEPTHGAD|SCREQF_SIZEGADS|SCREQF_GUIMODES,
-                                     RTSC_MaxDepth,    4,
+                                     RTSC_MaxDepth,    ScreenMaxDepth(),
                                      TAG_END))
             {
                 prefs.DisplayID     = scrmodereq->DisplayID;
@@ -769,10 +782,22 @@ static void ChoosePalette(void)
         if(rtPaletteRequestA("Screen Palette..", reqinfo, (struct TagItem *)&reqtoolsTags) != -1)
         {
             UWORD i = 0;
+            ULONG trip[3];
+            BOOL rgb32 = GfxBase != NULL && GfxBase->LibNode.lib_Version >= 39;
 
             while(i < 16)
             {
-                prefs.color[i] = GetRGB4(scr->ViewPort.ColorMap, i);
+                if (rgb32)
+                {
+                    GetRGB32(scr->ViewPort.ColorMap, i, 1, trip);
+                    prefs.ansi32[i] = SitePrefs_TripletToXRGB(trip[0], trip[1], trip[2]);
+                    prefs.color[i] = SitePrefs_XRGBtoRGB4(prefs.ansi32[i]);
+                }
+                else
+                {
+                    prefs.color[i] = GetRGB4(scr->ViewPort.ColorMap, i);
+                    prefs.ansi32[i] = SitePrefs_RGB4to32(prefs.color[i]);
+                }
                 i++;
             }
             CommitPrefs();
@@ -2466,6 +2491,11 @@ static void GetWindowMsg(struct Window *wwin)
                         {
                             SimpleReq("No XEM library has been selected yet.\n"
                                       "Please choose one first from the Settings menu.");
+                        }
+                        else if (prefs.DisplayDepth > 4)
+                        {
+                            SimpleReq("The XEM library needs depth 4 or less.\n"
+                                      "Pick a 16-colour screen mode first.");
                         }
                         else
                             UpdatePrefsFlagFromMenu(item, FLAG_USE_XEM_LIBRARY);
