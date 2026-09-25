@@ -52,6 +52,7 @@ static char MainWindowTitle[] =
 #include "petscii_keymap.h"
 #include "petscii_local.h"
 #include "site_prefs.h"
+#include "sgr_remap.h"
 #ifdef __VBCC__
     #pragma popwarn
 #endif
@@ -211,6 +212,11 @@ struct PrefsStruct prefs;
  * settings of its own, `prefs` holds the entry snapshot and only
  * `globalPrefs` reaches the disk. */
 struct PrefsStruct globalPrefs;
+
+/* WB terminal SGR map state (see BuildWbPenMap below). */
+static UBYTE wbPenMap[16];
+static BOOL wbMapActive = FALSE;
+static UBYTE wbScratch[8192];
 ULONG sessionSettingsId = 0;    /* 0 = no entry settings active */
 
 /* Record a user-made settings change: it always lands in the effective
@@ -287,6 +293,24 @@ static void ConWrite(char *data, long len)
         if(drivertype)
             XemWrite(data, len);
         else {
+            char *outData = data;
+            long outLen = len;
+
+            /* Workbench shares its palette: rewrite SGR colours through
+             * the nearest-match map (black background included). A 0
+             * return (empty/oversize) falls back to verbatim. */
+            if (wbMapActive)
+            {
+                size_t n = SgrRemap((const UBYTE *)data,
+                                    (size_t)(len < 0 ? 0 : len),
+                                    wbPenMap, wbScratch, sizeof(wbScratch));
+                if (n != 0)
+                {
+                    outData = (char *)wbScratch;
+                    outLen = (long)n;
+                }
+            }
+
             #ifdef _DEBUG
                 if (!writeConsoleReq) RecoveryAlert(
                                        "Error writing to console: console device is unavailable.");
@@ -296,8 +320,8 @@ static void ConWrite(char *data, long len)
             // https://amigadev.elowar.com/read/ADCD_2.1/Devices_Manual_guide/node0006.html
 
             // An I/O request typically has three fields set for every command sent to a device:
-            writeConsoleReq->io_Data = data;
-            writeConsoleReq->io_Length = len;
+            writeConsoleReq->io_Data = outData;
+            writeConsoleReq->io_Length = outLen;
             writeConsoleReq->io_Command = CMD_WRITE;
             DoIO((struct IORequest *)writeConsoleReq); // DoIO() is a synchronous function
         }
@@ -2994,6 +3018,26 @@ static struct TextFont *OpenPetsciiFont(STRPTR name, STRPTR progdirPath)
     return font;
 }
 
+/* WB terminal pens: nearest WB match for each ANSI colour (SGR through
+ * ibmcon can only address pens 0-7). Built at console open; the WB
+ * colormap stays valid while our window is open. Dropped on close. */
+static void BuildWbPenMap(void)
+{
+    ULONG trip[3], wbPal[8];
+    int i;
+
+    wbMapActive = FALSE;
+    if (!isRunningOnWB || GfxBase == NULL || GfxBase->LibNode.lib_Version < 39)
+        return;
+    for (i = 0; i < 8; i++)
+    {
+        GetRGB32(scr->ViewPort.ColorMap, (ULONG)i, 1, trip);
+        wbPal[i] = SitePrefs_TripletToXRGB(trip[0], trip[1], trip[2]);
+    }
+    SgrBuildMap(prefs.ansi32, wbPal, wbPenMap);
+    wbMapActive = TRUE;
+}
+
 /* TRUE on our own screen with room and APIs for private UI pens. */
 BOOL UsePrivateUiPens(void)
 {
@@ -3499,6 +3543,7 @@ BOOL OpenDisplay(void)
         if(b == RETURN_OK)
         {
             isConDeviceOpened = TRUE;
+            BuildWbPenMap();
         }
         else
         {
@@ -3672,6 +3717,7 @@ void CloseDisplay(BOOL manageScreen)
         ClearMenuStrip(win);
         CloseWindow(win);
         win = NULL;
+        wbMapActive = FALSE;
     }
 
     CloseScrollBack();

@@ -3,7 +3,7 @@
 CC := cc
 CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 
-TESTS := test_petscii_modules test_petscii_dispatch test_site_prefs test_petscii_local
+TESTS := test_petscii_modules test_petscii_dispatch test_site_prefs test_petscii_local test_sgr_remap
 
 .PHONY: all clean check-encoding check-fonts
 all: $(TESTS) check-encoding check-fonts
@@ -40,6 +40,9 @@ test_site_prefs: test_site_prefs.c ../src/site_prefs.c ../src/site_prefs.h ../sr
 
 test_petscii_local: test_petscii_local.c ../src/petscii_local.c ../src/petscii_local.h
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^)
+
+test_sgr_remap: test_sgr_remap.c ../src/sgr_remap.c ../src/sgr_remap.h
+	$(CC) $(CFLAGS) -Ihost -o $@ $(filter %.c,$^)
 
 clean:
 	rm -f $(TESTS)
