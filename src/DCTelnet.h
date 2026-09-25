@@ -200,6 +200,7 @@ void CommitPrefs(void);   /* prefs -> globalPrefs, unless entry settings are act
 void DisconnectBeforeEntryConnect(void);   /* Address Book: end live session first */
 void ApplyEntrySettings(const struct PrefsStruct *entry, ULONG settingsId);
 BOOL SaveEntrySettings(ULONG settingsId, const struct PrefsStruct *settings);
+BOOL UsePrivateUiPens(void);   /* private UI pens on 256-colour screens */
 void SimpleReq(char *str);
 void SetWaitPointer(struct Window * window);
 UWORD BeginServerConnection(char *servername, UWORD port);

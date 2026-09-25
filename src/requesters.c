@@ -62,6 +62,7 @@
 #include <string.h>           // strlen(), memset(), size_t
 #include "requesters.h"
 #include "utils.h"   /* selectAllHook (tab select-all EditHook) */
+#include "guis.h"    /* PaintDialogBackground */
 
 
 // Calling module must provide these:
@@ -600,6 +601,7 @@ BOOL GetStringRequester(struct Window *parent, STRPTR title, STRPTR prompt,
     }
 
 
+    PaintDialogBackground(win);
     GT_RefreshWindow(win, NULL);
 
     ActivateGadget(stringGad, win, NULL);

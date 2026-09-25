@@ -2995,7 +2995,7 @@ static struct TextFont *OpenPetsciiFont(STRPTR name, STRPTR progdirPath)
 }
 
 /* TRUE on our own screen with room and APIs for private UI pens. */
-static BOOL UsePrivateUiPens(void)
+BOOL UsePrivateUiPens(void)
 {
     return (BOOL)(!isRunningOnWB && prefs.DisplayDepth >= 5 &&
                   GfxBase != NULL && GfxBase->LibNode.lib_Version >= 39);

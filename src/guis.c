@@ -12,6 +12,7 @@
 #include <proto/graphics.h>           // Move(), SetAPen(), Text(), SetFont(), Draw()
 #include <proto/gadtools.h>           // LISTVIEW_KIND, BUTTON_KIND, GTLV_Labels...
 #include <proto/icon.h>               // GetDiskObjectNew(), FreeDiskObject()
+#include <intuition/screens.h>          // BACKGROUNDPEN (dialog base paint)
 #ifdef __VBCC__
     #pragma popwarn
 #endif
@@ -24,6 +25,19 @@
 #include "requesters.h"
 #include "utils.h"
 #include "site_prefs.h"
+
+/* Gray dialog base on 256-colour screens: black TEXTPEN labels (sampled
+ * from Workbench) are invisible on DCTelnet's legacy black dialog base.
+ * Fixed-size SMART_REFRESH dialogs keep the fill in their bitmap. */
+void PaintDialogBackground(struct Window *wnd)
+{
+    if (wnd == NULL || !UsePrivateUiPens() || drawInfo == NULL)
+        return;
+    SetAPen(wnd->RPort, drawInfo->dri_Pens[BACKGROUNDPEN]);
+    RectFill(wnd->RPort, wnd->BorderLeft, wnd->BorderTop,
+             wnd->Width - wnd->BorderRight - 1,
+             wnd->Height - wnd->BorderBottom - 1);
+}
 
 struct BookStruct
 {
@@ -188,6 +202,7 @@ static int OpenABookWindow( void )
 
     aBookWnd = OpenWindow(&newWin);
     if(!aBookWnd) return( 4L );
+    PaintDialogBackground(aBookWnd);
 
 /*    if ( ! ( aBookWnd = OpenWindowTags( NULL,
                 WA_Left,    (scr->Width - x) / 2,
@@ -766,6 +781,7 @@ static int OpenEditProfileWindow( void )
 
     editProfileWnd = OpenWindow(&newWin);
     if(!editProfileWnd) return( 4L );
+    PaintDialogBackground(editProfileWnd);
 
     /*if ( ! ( editProfileWnd = OpenWindowTags( NULL,
                 WA_Left,    (scr->Width - x) / 2,
@@ -1303,6 +1319,7 @@ static int OpenFKeysWindow( void )
                 TAG_DONE )))
     return( 4L );
 
+    PaintDialogBackground(fKeysWnd);
     GT_RefreshWindow( fKeysWnd, NULL );
 
     return( 0L );

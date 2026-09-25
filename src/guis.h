@@ -3,6 +3,10 @@
 
 #include <exec/types.h>
 
+/* Gray dialog base on 256-colour screens (see uiPens[] in DCTelnet.c).
+ * No-op anywhere else. Call after OpenWindow, before GT_RefreshWindow. */
+void PaintDialogBackground(struct Window *wnd);
+
 // Types
 struct MyNewGadget
 {

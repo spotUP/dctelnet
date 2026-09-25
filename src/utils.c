@@ -275,11 +275,16 @@ int stricmp(const char *a, const char *b)
 /* Select-all-on-entry for GadTools string/integer gadgets (tab fix).
  *
  * GadTools has no select-all tag; the customization point is the EditHook
- * (SGH_KEY per keystroke, SGH_CLICK on activation/click, see
+ * (SGH_KEY per keystroke, SGH_CLICK on mouse click, see
  * intuition/sghooks.h). One static hook serves all dialogs (single task,
- * modal loops): entering a field arms replace for that gadget, the first
- * printable keystroke (or Backspace/Delete) replaces/clears, anything else
- * disarms. A genuine mouse click disarms so click-to-position keeps working.
+ * modal loops).
+ *
+ * Fresh entry is detected from the KEY STREAM, not from activation events:
+ * SGH_CLICK demonstrably does not fire on keyboard/programmatic activation
+ * (FS-UAE: arming there left the hook dead), so the first SGH_KEY for a
+ * gadget different from the last-typed one means "just entered". A genuine
+ * mouse click (SGH_CLICK with a RAWMOUSE event) suppresses replacement once
+ * so click-to-position keeps working.
  *
  * 68k note: the OS calls hooks with (a0=hook, a2=object, a1=message), hence
  * the __reg() parameter convention below (vbcc).
@@ -297,7 +302,8 @@ int stricmp(const char *a, const char *b)
 #define HOOK_A2
 #endif
 
-static struct Gadget *armedGadget = NULL;
+static struct Gadget *lastKeyGadget = NULL;
+static struct Gadget *clickedGadget = NULL;   /* one-shot click suppress */
 
 static ULONG StringSelectAllFunc(HOOK_A0 struct Hook *hook,
                                  HOOK_A2 APTR object,
@@ -308,19 +314,19 @@ static ULONG StringSelectAllFunc(HOOK_A0 struct Hook *hook,
 
     if (*cmd == SGH_CLICK)
     {
-        if (work->IEvent == NULL ||
-            ((struct InputEvent *)work->IEvent)->ie_Class != IECLASS_RAWMOUSE)
-            armedGadget = work->Gadget;   /* TAB/shortcut/programmatic entry */
-        else if (armedGadget == work->Gadget)
-            armedGadget = NULL;           /* genuine click: keep cursor */
+        /* Genuine mouse click: position the cursor, don't replace. */
+        if (work->IEvent != NULL &&
+            ((struct InputEvent *)work->IEvent)->ie_Class == IECLASS_RAWMOUSE)
+            clickedGadget = work->Gadget;
         return 1;
     }
 
     if (*cmd != SGH_KEY)
         return 0;
 
-    if (armedGadget == work->Gadget)
+    if (work->Gadget != lastKeyGadget && work->Gadget != clickedGadget)
     {
+        /* First keystroke since entering this field: replace/select-all. */
         if (work->EditOp == EO_INSERTCHAR || work->EditOp == EO_REPLACECHAR)
         {
             /* The keystroke is pre-applied in WorkBuffer: replace the whole
@@ -331,7 +337,7 @@ static ULONG StringSelectAllFunc(HOOK_A0 struct Hook *hook,
             work->BufferPos = 1;
             if (work->Modes & SGM_LONGINT)
                 work->LongInt = (LONG)(work->Code - '0');
-            work->Actions |= SGA_REDISPLAY;
+            work->Actions |= (SGA_USE | SGA_REDISPLAY);
         }
         else if (work->EditOp == EO_DELBACKWARD || work->EditOp == EO_DELFORWARD)
         {
@@ -341,11 +347,12 @@ static ULONG StringSelectAllFunc(HOOK_A0 struct Hook *hook,
             work->BufferPos = 0;
             if (work->Modes & SGM_LONGINT)
                 work->LongInt = 0;
-            work->Actions |= SGA_REDISPLAY;
+            work->Actions |= (SGA_USE | SGA_REDISPLAY);
         }
-        armedGadget = NULL;
     }
 
+    lastKeyGadget = work->Gadget;
+    clickedGadget = NULL;
     return 1;
 }
 
