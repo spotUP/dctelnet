@@ -3,7 +3,7 @@
 CC := cc
 CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 
-TESTS := test_petscii_modules test_petscii_dispatch test_site_prefs
+TESTS := test_petscii_modules test_petscii_dispatch test_site_prefs test_petscii_local
 
 .PHONY: all clean check-encoding check-fonts
 all: $(TESTS) check-encoding check-fonts
@@ -37,6 +37,9 @@ test_petscii_dispatch: test_petscii_dispatch.c ../src/petscii_dispatch.c ../src/
 # test/host carries a tiny shim for the host build only.
 test_site_prefs: test_site_prefs.c ../src/site_prefs.c ../src/site_prefs.h ../src/DCTelnet.h host/exec/types.h
 	$(CC) $(CFLAGS) -Ihost -o $@ $(filter %.c,$^)
+
+test_petscii_local: test_petscii_local.c ../src/petscii_local.c ../src/petscii_local.h
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^)
 
 clean:
 	rm -f $(TESTS)
