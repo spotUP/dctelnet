@@ -12,6 +12,9 @@
 #define GD_SETTINGS_LABEL                      8
 #define GD_USE_CURRENT                         9
 #define GD_USE_GLOBAL                          10
+#define GD_PETSCII                             11
+#define GD_FONT_TEXT                           12
+#define GD_FONT_BUTTON                         13
 
 #define GDX_SITE                               0
 #define GDX_ADDRESS                            1
@@ -21,6 +24,6 @@
 #define GDX_USERNAME                           6
 #define GDX_PASSWORD                           7
 
-#define editProfile_CNT 11
+#define editProfile_CNT 14
 
 #endif /* EDIT_H */

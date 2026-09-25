@@ -694,9 +694,9 @@ add:
 
 static struct Window         *editProfileWnd;           // "Edit Address Book Profile" window
 static struct Gadget         *editProfileGList;         // "Edit Address Book Profile" window GList
-static struct Gadget         *editProfileGadgets[11];   // "Edit Address Book Profile" window gadgets
+static struct Gadget         *editProfileGadgets[14];   // "Edit Address Book Profile" window gadgets
 #define editProfileWidth 450
-#define editProfileHeight 128
+#define editProfileHeight 143
 
 static UBYTE editProfileGTypes[] = {
     STRING_KIND,
@@ -709,6 +709,9 @@ static UBYTE editProfileGTypes[] = {
     STRING_KIND,
     TEXT_KIND,
     BUTTON_KIND,
+    BUTTON_KIND,
+    CHECKBOX_KIND,
+    TEXT_KIND,
     BUTTON_KIND
 };
 
@@ -716,14 +719,17 @@ static struct MyNewGadget editProfileNGad[] = {
     120, 5, 317, 13, (UBYTE *)"_Site Name:",
     120, 21, 317, 13, (UBYTE *)"_Address:",
     121, 37, 177, 13, (UBYTE *)"Last Called:",
-    3, 113, 101, 13, (UBYTE *)"_Ok",
-    345, 113, 101, 13, (UBYTE *)"_Cancel",
+    3, 128, 101, 13, (UBYTE *)"_Ok",
+    345, 128, 101, 13, (UBYTE *)"_Cancel",
     365, 37, 72, 13, (UBYTE *)"_Port:",
     120, 53, 317, 13, (UBYTE *)"_Username:",
     120, 68, 317, 13, (UBYTE *)"Pass_word:",
     120, 83, 177, 13, (UBYTE *)"Settings:",
-    3, 98, 180, 13, (UBYTE *)"Use Curren_t Settings",
-    267, 98, 180, 13, (UBYTE *)"Use _Global Settings",
+    3, 98, 175, 13, (UBYTE *)"PETSCII _Mode",
+    185, 98, 100, 13, (UBYTE *)"_Font...",
+    292, 98, 145, 13, (UBYTE *)"",
+    3, 113, 180, 13, (UBYTE *)"Use Curren_t Settings",
+    267, 113, 180, 13, (UBYTE *)"Use _Global Settings",
 };
 
 static ULONG editProfileGTags[] = {
@@ -737,6 +743,9 @@ static ULONG editProfileGTags[] = {
     GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
     GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE),
+    (GT_Underscore), '_', (TAG_DONE),
+    (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
+    GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE)
 };
 
@@ -749,6 +758,8 @@ static ULONG editProfileGTags[] = {
 #define ETAG_USERNAME 39
 #define ETAG_PASSWORD 48
 #define ETAG_SETTINGS 57
+#define ETAG_PETSCII 69
+#define ETAG_FONTNAME 73
 
 // Draw the Edit Address Book Profile window
 static int OpenEditProfileWindow( void )
@@ -805,46 +816,56 @@ static int OpenEditProfileWindow( void )
     DrawBevelBox( editProfileWnd->RPort, OffX + ComputeX( 3 ),
                     OffY + ComputeY( 1 ),
                     ComputeX( 444 ),
-                    ComputeY( 111 ),
+                    ComputeY( 126 ),
                     GT_VisualInfo, visualInfos, TAG_DONE );
     return( 0L );
 }
 
 
 /* The entry's staged content, made visible: "Global" or e.g.
- * "Own: PETSCII, WB". Reads the sidecar file when it exists; a freshly
- * staged id (no file yet) describes the live prefs, which is exactly what
- * OK will snapshot (nothing else can change them while modal). */
-static void EditSettingsSummary(ULONG settingsId, char *labelBuf, size_t labelLen)
+ * "Own: PETSCII, WB". Describes the STAGED prefs (file content at dialog
+ * open, live edits after) -- never the file, so uncommitted checkbox/font
+ * changes show immediately. */
+static void EditSettingsSummary(const struct PrefsStruct *staged,
+                                ULONG settingsId, char *labelBuf, size_t labelLen)
 {
-    struct PrefsStruct entrySettings;
-    const struct PrefsStruct *s = &prefs;
-
     if (settingsId == 0)
     {
         strlcpy(labelBuf, "Global", labelLen);
     }
     else
     {
-        if (LoadEntrySettings(settingsId, &entrySettings))
-            s = &entrySettings;
-        mysprintf(labelBuf, "Own: %s%s", (s->flags & FLAG_PETSCII_MODE) ? "PETSCII" : "ANSI",
-                  (s->flags & FLAG_USE_WORKBENCH) ? ", WB" : "");
+        mysprintf(labelBuf, "Own: %s%s", (staged->flags & FLAG_PETSCII_MODE) ? "PETSCII" : "ANSI",
+                  (staged->flags & FLAG_USE_WORKBENCH) ? ", WB" : "");
     }
 }
 
 /* Same, pushed into the live label (window must be open). */
-static void EditSettingsRefresh(char *labelBuf, size_t labelLen, ULONG settingsId)
+static void EditSettingsRefresh(const struct PrefsStruct *staged,
+                                char *labelBuf, size_t labelLen, ULONG settingsId)
 {
-    EditSettingsSummary(settingsId, labelBuf, labelLen);
+    EditSettingsSummary(staged, settingsId, labelBuf, labelLen);
     GT_SetGadgetAttrs(editProfileGadgets[GD_SETTINGS_LABEL], editProfileWnd, 0,
                       GTTX_Text, labelBuf, TAG_DONE);
 }
 
+/* Push the staged PETSCII/font into the live gadgets (window open). */
+static void EditStagedRefresh(const struct PrefsStruct *staged,
+                              char *labelBuf, size_t labelLen, ULONG settingsId)
+{
+    GT_SetGadgetAttrs(editProfileGadgets[GD_PETSCII], editProfileWnd, 0,
+                      GTCB_Checked, (staged->flags & FLAG_PETSCII_MODE) ? TRUE : FALSE,
+                      TAG_DONE);
+    GT_SetGadgetAttrs(editProfileGadgets[GD_FONT_TEXT], editProfileWnd, 0,
+                      GTTX_Text, staged->fontname, TAG_DONE);
+    EditSettingsRefresh(staged, labelBuf, labelLen, settingsId);
+}
+
 /* "Use Current Settings": the entry gets its own settings on OK (a fresh
- * id when it has none). The snapshot itself is written on OK, from the
- * live effective prefs. */
+ * id when it has none). Snapshots the live effective prefs into the
+ * staged copy, which the checkbox/font buttons may then adjust. */
 static void EditUseCurrentSettings(struct List *bookList, ULONG *newSettingsId,
+                                   struct PrefsStruct *staged,
                                    char *labelBuf, size_t labelLen)
 {
     if (*newSettingsId == 0)
@@ -856,14 +877,45 @@ static void EditUseCurrentSettings(struct List *bookList, ULONG *newSettingsId,
             return;
         }
     }
-    EditSettingsRefresh(labelBuf, labelLen, *newSettingsId);
+    *staged = prefs;
+    EditStagedRefresh(staged, labelBuf, labelLen, *newSettingsId);
 }
 
 /* "Use Global Settings": drop the entry's settings on OK (file deleted). */
-static void EditUseGlobalSettings(ULONG *newSettingsId, char *labelBuf, size_t labelLen)
+static void EditUseGlobalSettings(ULONG *newSettingsId,
+                                  struct PrefsStruct *staged,
+                                  char *labelBuf, size_t labelLen)
 {
     *newSettingsId = 0;
-    EditSettingsRefresh(labelBuf, labelLen, 0);
+    *staged = globalPrefs;
+    EditStagedRefresh(staged, labelBuf, labelLen, 0);
+}
+
+/* PETSCII checkbox (button or 'M' key): toggle the staged flag and force
+ * the gadget to match, so both stay in sync however GadTools toggles. */
+static void EditTogglePetscii(struct PrefsStruct *staged,
+                              char *labelBuf, size_t labelLen, ULONG settingsId)
+{
+    if (staged->flags & FLAG_PETSCII_MODE)
+        staged->flags &= ~FLAG_PETSCII_MODE;
+    else
+        staged->flags |= FLAG_PETSCII_MODE;
+    GT_SetGadgetAttrs(editProfileGadgets[GD_PETSCII], editProfileWnd, 0,
+                      GTCB_Checked, (staged->flags & FLAG_PETSCII_MODE) ? TRUE : FALSE,
+                      TAG_DONE);
+    EditSettingsRefresh(staged, labelBuf, labelLen, settingsId);
+}
+
+/* Font button (or 'F' key): pick straight into the staged copy. */
+static void EditPickFont(struct PrefsStruct *staged)
+{
+    if (FontRequester(editProfileWnd,
+                      staged->fontname, sizeof(staged->fontname),
+                      &staged->fontsize))
+    {
+        GT_SetGadgetAttrs(editProfileGadgets[GD_FONT_TEXT], editProfileWnd, 0,
+                          GTTX_Text, staged->fontname, TAG_DONE);
+    }
 }
 
 /*
@@ -879,6 +931,7 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
     char strLastTime[2 * LEN_DATSTRING];
     char strSettings[24];
     ULONG newSettingsId;
+    struct PrefsStruct stagedSettings;
     struct IntuiMessage *message;
     struct Gadget *gad;
     ULONG class;
@@ -887,7 +940,12 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
     BOOL ret = FALSE;
 
     // The entry's settings id, staged until OK (Cancel changes nothing).
+    // stagedSettings starts as the sidecar content (or the globals) and
+    // takes the checkbox/font/button edits; OK writes it to the sidecar.
     newSettingsId = book->settingsId;
+    stagedSettings = globalPrefs;
+    if (newSettingsId != 0)
+        LoadEntrySettings(newSettingsId, &stagedSettings);  /* stale id keeps globals */
 
     // Initialize gadget fields with current book data
     editProfileGTags[ETAG_SITE] = (unsigned long)book->name;
@@ -897,8 +955,11 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
     editProfileGTags[ETAG_PORT] = (unsigned long)book->port;
     editProfileGTags[ETAG_USERNAME] = (unsigned long)book->username;
     editProfileGTags[ETAG_PASSWORD] = (unsigned long)book->password;
-    EditSettingsSummary(newSettingsId, strSettings, sizeof(strSettings));
+    EditSettingsSummary(&stagedSettings, newSettingsId, strSettings, sizeof(strSettings));
     editProfileGTags[ETAG_SETTINGS] = (unsigned long)strSettings;
+    editProfileGTags[ETAG_PETSCII] =
+        (stagedSettings.flags & FLAG_PETSCII_MODE) ? TRUE : FALSE;
+    editProfileGTags[ETAG_FONTNAME] = (unsigned long)stagedSettings.fontname;
 
     // Open the Edit Profile window
     if(OpenEditProfileWindow() == RETURN_OK)
@@ -946,10 +1007,18 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
                         case 'U':  vgad = editProfileGadgets[GD_USERNAME];    break;
                         case 'W':  vgad = editProfileGadgets[GD_PASSWORD];    break;
                         case 'T':  EditUseCurrentSettings(bookList, &newSettingsId,
+                                                          &stagedSettings,
                                                           strSettings, sizeof(strSettings));
                                    break;
                         case 'G':  EditUseGlobalSettings(&newSettingsId,
+                                                         &stagedSettings,
                                                          strSettings, sizeof(strSettings));
+                                   break;
+                        case 'M':  EditTogglePetscii(&stagedSettings,
+                                                     strSettings, sizeof(strSettings),
+                                                     newSettingsId);
+                                   break;
+                        case 'F':  EditPickFont(&stagedSettings);
                                    break;
                     }
                     if(vgad) ActivateGadget(vgad, editProfileWnd, 0); // Focus gadget
@@ -968,11 +1037,21 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
                         break;
                     case GD_USE_CURRENT:
                         EditUseCurrentSettings(bookList, &newSettingsId,
+                                               &stagedSettings,
                                                strSettings, sizeof(strSettings));
                         break;
                     case GD_USE_GLOBAL:
                         EditUseGlobalSettings(&newSettingsId,
+                                              &stagedSettings,
                                               strSettings, sizeof(strSettings));
+                        break;
+                    case GD_PETSCII:
+                        EditTogglePetscii(&stagedSettings,
+                                          strSettings, sizeof(strSettings),
+                                          newSettingsId);
+                        break;
+                    case GD_FONT_BUTTON:
+                        EditPickFont(&stagedSettings);
                         break;
                     }
                     break;
@@ -997,9 +1076,10 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
                     ((struct StringInfo *)editProfileGadgets[GD_PASSWORD]->SpecialInfo)->Buffer,
                     sizeof(book->password));
 
-            /* Per-entry settings (issue #10), staged by the dialog buttons:
-             * a dropped id deletes its sidecar, a kept or new id snapshots
-             * the live effective prefs. Cancel above skipped all of this. */
+            /* Per-entry settings (issue #10), staged in this dialog:
+             * a dropped id deletes its sidecar, a kept or new id writes
+             * the staged copy (checkbox/font/buttons). Cancel above
+             * skipped all of this. */
             if (newSettingsId != book->settingsId)
             {
                 if (book->settingsId != 0)
@@ -1007,7 +1087,7 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
                 book->settingsId = newSettingsId;
             }
             if (newSettingsId != 0
-                && !SaveEntrySettings(newSettingsId, &prefs))
+                && !SaveEntrySettings(newSettingsId, &stagedSettings))
                 SimpleReq("Could not save the entry settings (PROGDIR:Sites).");
         }
 
