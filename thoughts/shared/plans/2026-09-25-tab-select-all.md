@@ -35,13 +35,12 @@ keystroke and `SGH_CLICK` on activation/click, operating on `SGWork`
   in `editProfileGTags`, `fKeysGTags`, and the requester's gadget tags
   (`src/requesters.c:543-546`). GadTools supplies `WorkBuffer` for tag
   hooks; no manual `StringExtend` needed.
-- Armed state: one static `struct Gadget *armedGadget` (single task, all
-  dialogs modal -- safe).
-  - `SGH_CLICK`: arm when the activation did NOT come from a real mouse
-    click (`IEvent == NULL` for `ActivateGadget`, or `ie_Class !=
-    IECLFC... RAWMOUSE`); a genuine click disarms (cursor positioning keeps
-    working). Always leave `SGA_REDISPLAY`. Return nonzero (command
-    implemented).
+- Armed state: tracked from the KEY STREAM, not activation events. SGH_CLICK
+  demonstrably does not fire on keyboard/programmatic activation (v1 arming
+  there left the hook dead on hardware), so the first SGH_KEY for a gadget
+  other than the last-typed one means just entered (lastKeyGadget).
+  A genuine mouse click (SGH_CLICK + RAWMOUSE event) suppresses replacement
+  one-shot (clickedGadget) so click-to-position keeps working.
   - `SGH_KEY` with `EO_INSERTCHAR`/`EO_REPLACECHAR` while armed for this
     gadget: reset `WorkBuffer[0] = Code; NumChars = 1; BufferPos = 1`
     (the keystroke is pre-applied in `WorkBuffer` -- emptying alone would
