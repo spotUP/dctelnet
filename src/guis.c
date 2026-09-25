@@ -23,6 +23,7 @@
 #include "DCTelnet.h"
 #include "requesters.h"
 #include "utils.h"
+#include "site_prefs.h"
 
 struct BookStruct
 {
@@ -32,8 +33,18 @@ struct BookStruct
     ULONG   lastConnect;
     char    username[42];
     char    password[42];
-    char    res[82];
+    /* Per-entry settings (upstream issue #10): 0 = this entry uses the
+     * global settings, otherwise the id of its PROGDIR:Sites/<id>.prefs
+     * sidecar file. Old DCTelnet versions round-trip these bytes untouched,
+     * so a book saved here still loads there (entries use global settings).
+     * Shipped books have these bytes zeroed, i.e. settingsId == 0. */
+    ULONG   settingsId;
+    char    res[78];
 };
+
+/* The on-disk record is a raw dump with an implicit 256-byte stride and no
+ * version: a size change silently misreads every existing DCTelnet.Book. */
+typedef char BookStruct_size_check[sizeof(struct BookStruct) == 256 ? 1 : -1];
 
 static BOOL EditProfile(struct BookStruct *book);
 
@@ -318,6 +329,109 @@ static void SortABook(struct List *list, UWORD sortMode)
  * The function is modal and returns only when the user
  * closes the Address Book window or initiates a connection.
  */
+
+/* -- Per-entry settings sidecar files (upstream issue #10) --
+ * Load/Save/Alloc are unused until the connect path (phase 3) and the edit
+ * UI (phase 4) call them; DeleteEntrySettings is wired below already. */
+
+#define SITES_DIR "PROGDIR:Sites"
+
+/* Highest settingsId in use + 1, so a new id never reuses a live file's.
+ * Returns 0 when the id space is exhausted (caller reports failure). */
+ULONG AllocEntrySettingsId(struct List *bookList)
+{
+    struct Node *worknode, *nextnode;
+    ULONG max = 0, id;
+
+    worknode = bookList->lh_Head;
+    while (1)
+    {
+        nextnode = worknode->ln_Succ;
+        if (!nextnode) break;
+
+        id = ((struct BookStruct *)worknode->ln_Name)->settingsId;
+        if (id > max)
+            max = id;
+
+        worknode = nextnode;
+    }
+
+    if (max == (ULONG)~0UL)
+        return 0;
+    return max + 1;
+}
+
+/* Reads PROGDIR:Sites/<settingsId>.prefs. FALSE = no settings (missing file,
+ * bad magic, short read): the entry uses the global settings. */
+BOOL LoadEntrySettings(ULONG settingsId, struct PrefsStruct *settings)
+{
+    char path[SITE_PREFS_PATH_LEN];
+    UBYTE filebuf[4 + sizeof(struct PrefsStruct)];
+    BPTR fh;
+    LONG got;
+
+    if (settingsId == 0 || settings == NULL)
+        return FALSE;
+    if (SitePrefs_FileName(settingsId, path, sizeof(path)) == NULL)
+        return FALSE;
+
+    fh = Open(path, MODE_OLDFILE);
+    if (!fh)
+        return FALSE;
+    got = Read(fh, filebuf, sizeof(filebuf));
+    Close(fh);
+
+    if (got < 0)
+        return FALSE;
+    return SitePrefs_Decode(filebuf, (size_t)got, settings);
+}
+
+/* Writes PROGDIR:Sites/<settingsId>.prefs, creating PROGDIR:Sites on demand. */
+BOOL SaveEntrySettings(ULONG settingsId, const struct PrefsStruct *settings)
+{
+    char path[SITE_PREFS_PATH_LEN];
+    UBYTE filebuf[4 + sizeof(struct PrefsStruct)];
+    BPTR fh, lock;
+
+    if (settingsId == 0 || settings == NULL)
+        return FALSE;
+    if (SitePrefs_FileName(settingsId, path, sizeof(path)) == NULL)
+        return FALSE;
+    if (SitePrefs_Encode(settings, filebuf, sizeof(filebuf)) == 0)
+        return FALSE;
+
+    fh = Open(path, MODE_NEWFILE);
+    if (!fh)
+    {
+        lock = CreateDir(SITES_DIR);
+        if (lock)
+            UnLock(lock);
+        fh = Open(path, MODE_NEWFILE);
+    }
+    if (!fh)
+        return FALSE;
+
+    if (Write(fh, filebuf, sizeof(filebuf)) != (LONG)sizeof(filebuf))
+    {
+        Close(fh);
+        return FALSE;
+    }
+    Close(fh);
+    return TRUE;
+}
+
+/* Deletes PROGDIR:Sites/<settingsId>.prefs; 0 and missing files are no-ops. */
+void DeleteEntrySettings(ULONG settingsId)
+{
+    char path[SITE_PREFS_PATH_LEN];
+
+    if (settingsId == 0)
+        return;
+    if (SitePrefs_FileName(settingsId, path, sizeof(path)) == NULL)
+        return;
+    DeleteFile(path);
+}
+
 void AddressBook(void)
 {
     struct IntuiMessage *message;
@@ -462,6 +576,7 @@ delete:
                             //if(rtEZRequestA(buf, "Delete|Cancel", NULL, NULL, (struct TagItem *)&reqtoolsTags))
                             {
                                 Remove(worknode);
+                                DeleteEntrySettings(((struct BookStruct *)worknode->ln_Name)->settingsId);
                                 FreeMem(worknode->ln_Name, sizeof(struct BookStruct));
                                 FreeMem(worknode, sizeof(struct Node));
                                 lastcode--;

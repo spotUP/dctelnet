@@ -29,4 +29,25 @@ BOOL SitePrefs_DisplayDiffers(const struct PrefsStruct *a,
                               const struct PrefsStruct *b,
                               BOOL *reopenScreen);
 
+/* -- Sidecar storage: PROGDIR:Sites/<settingsId>.prefs --
+ *
+ * A 4-byte magic/version ('DCS1') followed by a PrefsStruct dump in the same
+ * byte layout as DCTelnet.Prefs. A missing file, bad magic or short read
+ * decodes as "no settings" (FALSE): entries from books written before this
+ * feature, or by old DCTelnet versions, simply use the global settings.
+ * Longer files are accepted and the trailing bytes ignored.
+ *
+ * NOTE: the struct dump is 68k-native (376 bytes). The host tests below only
+ * prove the framing logic; the on-disk layout is exercised on Amiga. */
+
+/* Room for "PROGDIR:Sites/" + 20 digits + ".prefs" + NUL. */
+#define SITE_PREFS_PATH_LEN 64
+
+size_t SitePrefs_EncodedSize(void);
+size_t SitePrefs_Encode(const struct PrefsStruct *entry, UBYTE *out, size_t outLen);
+BOOL SitePrefs_Decode(const UBYTE *in, size_t inLen, struct PrefsStruct *entry);
+
+/* "PROGDIR:Sites/<id>.prefs" into out; NULL when outLen is too small. */
+char *SitePrefs_FileName(ULONG id, char *out, size_t outLen);
+
 #endif /* SITE_PREFS_H */

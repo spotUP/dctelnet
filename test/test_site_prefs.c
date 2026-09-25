@@ -184,6 +184,89 @@ static void test_null_reopen_pointer_is_safe(void) {
     assert(!SitePrefs_DisplayDiffers(&a, &b, NULL));
 }
 
+/* Encode -> decode round-trips the whole struct. (On the host the struct
+ * layout differs from the 68k one; this proves the framing, not the bytes.) */
+static void test_sidecar_round_trip(void) {
+    struct PrefsStruct entry, back;
+    UBYTE buf[4 + sizeof(struct PrefsStruct) + 16];
+    size_t n;
+
+    make_entry(&entry);
+    assert(SitePrefs_EncodedSize() == 4 + sizeof(struct PrefsStruct));
+    n = SitePrefs_Encode(&entry, buf, sizeof(buf));
+    assert(n == SitePrefs_EncodedSize());
+    assert(buf[0] == 'D' && buf[1] == 'C' && buf[2] == 'S' && buf[3] == '1');
+
+    memset(&back, 0xAA, sizeof(back));
+    assert(SitePrefs_Decode(buf, n, &back));
+    assert(memcmp(&back, &entry, sizeof(back)) == 0);
+}
+
+/* Bad magic, short reads and NULLs decode as "no settings". */
+static void test_sidecar_rejects_bad_input(void) {
+    struct PrefsStruct entry, back;
+    UBYTE buf[4 + sizeof(struct PrefsStruct) + 16];
+    size_t n;
+    UBYTE canary[sizeof(struct PrefsStruct)];
+
+    make_entry(&entry);
+    n = SitePrefs_Encode(&entry, buf, sizeof(buf));
+
+    memset(canary, 0xAA, sizeof(canary));
+
+    buf[0] = 'X';
+    memcpy(&back, canary, sizeof(back));
+    assert(!SitePrefs_Decode(buf, n, &back));
+    assert(memcmp(&back, canary, sizeof(back)) == 0);
+    buf[0] = 'D';
+
+    memcpy(&back, canary, sizeof(back));
+    assert(!SitePrefs_Decode(buf, n - 1, &back));  /* truncated */
+    assert(!SitePrefs_Decode(buf, 3, &back));      /* shorter than magic */
+    assert(!SitePrefs_Decode(buf, 0, &back));
+    assert(memcmp(&back, canary, sizeof(back)) == 0);
+
+    assert(!SitePrefs_Decode(NULL, n, &back));
+    assert(!SitePrefs_Decode(buf, n, NULL));
+
+    assert(SitePrefs_Encode(&entry, buf, n - 1) == 0);  /* too small */
+    assert(SitePrefs_Encode(NULL, buf, sizeof(buf)) == 0);
+    assert(SitePrefs_Encode(&entry, NULL, sizeof(buf)) == 0);
+}
+
+/* Longer files (newer fields) are accepted; the known prefix still matches. */
+static void test_sidecar_ignores_trailing_bytes(void) {
+    struct PrefsStruct entry, back;
+    UBYTE buf[4 + sizeof(struct PrefsStruct) + 16];
+    size_t n, i;
+
+    make_entry(&entry);
+    n = SitePrefs_Encode(&entry, buf, sizeof(buf));
+    for (i = n; i < sizeof(buf); i++)
+        buf[i] = (UBYTE)i;
+
+    assert(SitePrefs_Decode(buf, sizeof(buf), &back));
+    assert(memcmp(&back, &entry, sizeof(back)) == 0);
+}
+
+static void test_sidecar_file_name(void) {
+    char path[SITE_PREFS_PATH_LEN];
+    char tiny[8];
+
+    assert(SitePrefs_FileName(1, path, sizeof(path)) == path);
+    assert(strcmp(path, "PROGDIR:Sites/1.prefs") == 0);
+
+    assert(SitePrefs_FileName(12345, path, sizeof(path)) == path);
+    assert(strcmp(path, "PROGDIR:Sites/12345.prefs") == 0);
+
+    assert(SitePrefs_FileName(0, path, sizeof(path)) == path);
+    assert(strcmp(path, "PROGDIR:Sites/0.prefs") == 0);
+
+    assert(SitePrefs_FileName(1, tiny, sizeof(tiny)) == NULL);
+    assert(SitePrefs_FileName(1, NULL, sizeof(path)) == NULL);
+    assert(SitePrefs_FileName(1, path, 0) == NULL);
+}
+
 int main(void) {
     test_apply_keeps_global_geometry();
     test_restore_global();
@@ -192,6 +275,10 @@ int main(void) {
     test_window_flags_restart_without_screen();
     test_live_settings_need_no_restart();
     test_null_reopen_pointer_is_safe();
+    test_sidecar_round_trip();
+    test_sidecar_rejects_bad_input();
+    test_sidecar_ignores_trailing_bytes();
+    test_sidecar_file_name();
     printf("site_prefs: all assertions passed\n");
     return 0;
 }

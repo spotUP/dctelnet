@@ -74,3 +74,69 @@ BOOL SitePrefs_DisplayDiffers(const struct PrefsStruct *a,
 
     return FALSE;
 }
+
+size_t SitePrefs_EncodedSize(void)
+{
+    return 4 + sizeof(struct PrefsStruct);
+}
+
+size_t SitePrefs_Encode(const struct PrefsStruct *entry, UBYTE *out, size_t outLen)
+{
+    size_t need = SitePrefs_EncodedSize();
+
+    if (entry == NULL || out == NULL || outLen < need)
+        return 0;
+
+    /* Explicit bytes, not a ULONG store: identical on 68k and host. */
+    out[0] = 'D';
+    out[1] = 'C';
+    out[2] = 'S';
+    out[3] = '1';
+    memcpy(out + 4, entry, sizeof(*entry));
+    return need;
+}
+
+BOOL SitePrefs_Decode(const UBYTE *in, size_t inLen, struct PrefsStruct *entry)
+{
+    if (in == NULL || entry == NULL)
+        return FALSE;
+    if (inLen < SitePrefs_EncodedSize())
+        return FALSE;
+    if (in[0] != 'D' || in[1] != 'C' || in[2] != 'S' || in[3] != '1')
+        return FALSE;
+
+    /* Trailing bytes (newer fields) are ignored. */
+    memcpy(entry, in + 4, sizeof(*entry));
+    return TRUE;
+}
+
+char *SitePrefs_FileName(ULONG id, char *out, size_t outLen)
+{
+    static const char prefix[] = "PROGDIR:Sites/";
+    static const char suffix[] = ".prefs";
+    /* 20 digits cover a 64-bit ULONG on the host; 10 suffice on the Amiga. */
+    char digits[20];
+    int n = 0;
+    ULONG v = id;
+    size_t need, pos, i;
+
+    if (out == NULL || outLen == 0)
+        return NULL;
+
+    do {
+        digits[n++] = (char)('0' + (v % 10));
+        v /= 10;
+    } while (v > 0);
+
+    need = (sizeof(prefix) - 1) + (size_t)n + (sizeof(suffix) - 1) + 1;
+    if (need > outLen)
+        return NULL;
+
+    memcpy(out, prefix, sizeof(prefix) - 1);
+    pos = sizeof(prefix) - 1;
+    for (i = 0; i < (size_t)n; i++)
+        out[pos + i] = digits[n - 1 - (int)i];
+    pos += (size_t)n;
+    memcpy(out + pos, suffix, sizeof(suffix));  /* copies the NUL too */
+    return out;
+}
