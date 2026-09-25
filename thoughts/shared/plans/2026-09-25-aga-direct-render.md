@@ -30,7 +30,9 @@ behaves byte-identically.
 Two screens, flipped by hotkey (demo-scene style, multitasking-safe):
 Intuition screen keeps menus/dialogs/requesters/XEM untouched; the AGA
 View (graphics.library `View`+`ViewPort`, own copper, chip bitmaps) owns
-the session. No console.device anywhere near it.
+the session. No console.device anywhere near it. (Single-screen bitmap
+variant considered 2026-09-25 and held as fallback; owner: try two
+screens first.)
 
 - **Selector**: new `flags` bit (16-31 free) + Options item, classified
   screen-reopen in `SITE_PREFS_SCREEN_FLAGS`; mutually exclusive with XEM
