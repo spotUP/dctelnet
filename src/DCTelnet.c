@@ -42,7 +42,8 @@ static char MainWindowTitle[] =
 #include <proto/icon.h>               // GetDiskObjectNew(), FreeDiskObject()
 #include <proto/wb.h>                 // AddAppIconA(), RemoveAppIcon()
 #include <proto/keymap.h>             // MapRawKey(), RAWKEY_UP, RAWKEY_DOWN, RAWKEY_F1...
-#include <devices/conunit.h>          // CONU_SNIPMAP, CONU_CHARMAP, CONFLAG_DEFAULT
+#include <devices/conunit.h>
+#include <intuition/screens.h>  // DETAILPEN/BLOCKPEN/TEXTPEN          // CONU_SNIPMAP, CONU_CHARMAP, CONFLAG_DEFAULT
 #include <libraries/reqtools.h>       // struct rtFileList, RT_FILEREQ, RT_Window
 #include <proto/reqtools.h>           // rtAllocRequestA() rtScreenModeRequest() rtPaletteRequestA()
 #include <proto/socket.h>             // send(), <CloseSocket>()
@@ -257,6 +258,13 @@ static UBYTE drivertype;    // drivertype 0 - normal    1 - xem library
 static BOOL isFingerRequest;        // isFingerRequest?
 
 static UWORD colorPens[]  = { 1,4,1,1,6,4,1,0,5,4,1,6,65535 };
+
+/* Private UI pens for 256-colour screens (depth>=5, V39+): the AmigaOS
+ * UI renders on 16-27 while ANSI keeps 0-15, so the ANSI palette no
+ * longer hijacks title bar/menus/gadgets. A custom screen owns its whole
+ * colormap, so no ObtainPen/ReleasePen is needed. */
+static UWORD uiPens[] = { 16,17,18,19,20,21,22,23,24,25,26,27,65535 };
+static ULONG rgb32table[SITE_PREFS_RGB32_TABLE];
 static UWORD color[] = { 0x0000, 0x0DDD, 0x00D0, 0x0DD0, 0x000D, 0x0D0D, 0x00DD, 0x0D00,
           0x0555, 0x0FFF, 0x00F0, 0x0FF0, 0x000F, 0x0F0F, 0x00FF, 0x0F00, 65535 };
 /*                 black,    white,  green, yellow, blue, purple, aqua,   red */
@@ -2935,6 +2943,46 @@ static struct TextFont *OpenPetsciiFont(STRPTR name, STRPTR progdirPath)
     return font;
 }
 
+/* TRUE on our own screen with room and APIs for private UI pens. */
+static BOOL UsePrivateUiPens(void)
+{
+    return (BOOL)(!isRunningOnWB && prefs.DisplayDepth >= 5 &&
+                  GfxBase != NULL && GfxBase->LibNode.lib_Version >= 39);
+}
+
+/* UI colours sampled from the Workbench screen (its own pens), so our UI
+ * looks native; classic fallback when WB isn't available. */
+static void SampleWorkbenchUiColors(ULONG ui32[16])
+{
+    static const ULONG fallback[16] = {
+        0x0055AA00, 0xFFFFFFFF, 0x00000000, 0x88888800,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    struct Screen *wb;
+    struct DrawInfo *wbDraw;
+    ULONG trip[3];
+    int i;
+
+    for (i = 0; i < 16; i++)
+        ui32[i] = fallback[i];
+
+    wb = LockPubScreen("Workbench");
+    if (wb == NULL)
+        return;
+    wbDraw = GetScreenDrawInfo(wb);
+    if (wbDraw == NULL)
+    {
+        UnlockPubScreen(NULL, wb);
+        return;
+    }
+    for (i = 0; i < 12; i++)
+    {
+        GetRGB32(wb->ViewPort.ColorMap, wbDraw->dri_Pens[i], 1, trip);
+        ui32[i] = SitePrefs_TripletToXRGB(trip[0], trip[1], trip[2]);
+    }
+    FreeScreenDrawInfo(wb, wbDraw);
+    UnlockPubScreen(NULL, wb);
+}
+
 struct Screen* OpenAppScreen(void)
 {
     struct Screen *scr;
@@ -2974,7 +3022,9 @@ struct Screen* OpenAppScreen(void)
         register UWORD *pens;
         static struct NewScreen newscr;
 
-        if(prefs.DisplayDepth < 3) pens = &colorPens[12]; else pens = colorPens;
+        if(prefs.DisplayDepth < 3) pens = &colorPens[12];
+        else if (UsePrivateUiPens()) pens = uiPens;
+        else pens = colorPens;
 
         newscr.Width  = prefs.DisplayWidth;
         newscr.Height = prefs.DisplayHeight;
@@ -3026,6 +3076,12 @@ void OpenAppWindow(void)
     newWin.Type = PUBLICSCREEN;
     newWin.DetailPen = 255;
     newWin.BlockPen = 255;
+    if (UsePrivateUiPens() && drawInfo != NULL)
+    {
+        /* Our own UI pens (see uiPens[]) instead of pen 255. */
+        newWin.DetailPen = drawInfo->dri_Pens[DETAILPEN];
+        newWin.BlockPen = drawInfo->dri_Pens[BLOCKPEN];
+    }
 
     if (isRunningOnWB)
     {
@@ -3070,7 +3126,19 @@ void OpenAppWindow(void)
         GetNewMenuItemFromID(MENU_SCREEN_MODE)->nm_Flags = 0;
         GetNewMenuItemFromID(MENU_SCREEN_PALETTE)->nm_Flags = 0;
 
-        LoadRGB4(&scr->ViewPort, (UWORD *)&prefs.color, 16);
+        if (UsePrivateUiPens())
+        {
+            ULONG ui32[16];
+
+            SampleWorkbenchUiColors(ui32);
+            if (SitePrefs_BuildRGB32Table(prefs.ansi32, ui32,
+                                          rgb32table, SITE_PREFS_RGB32_TABLE) != 0)
+                LoadRGB32(&scr->ViewPort, rgb32table);
+            else
+                LoadRGB4(&scr->ViewPort, (UWORD *)&prefs.color, 16);
+        }
+        else
+            LoadRGB4(&scr->ViewPort, (UWORD *)&prefs.color, 16);
 
         if(prefs.flags & FLAG_TOOL_BAR) OpenToolBarWindow(FALSE);
 
@@ -3219,7 +3287,8 @@ void CreateAppMenus(void)
     if (item != NULL)
     {
         if (prefs.DisplayDepth > 1)
-            ((struct IntuiText *)item->ItemFill)->FrontPen = 15;
+            ((struct IntuiText *)item->ItemFill)->FrontPen =
+                UsePrivateUiPens() ? drawInfo->dri_Pens[TEXTPEN] : 15;
 
         item->Flags = (item->Flags & ~HIGHFLAGS) | HIGHBOX;
     }

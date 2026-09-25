@@ -57,6 +57,23 @@ ULONG SitePrefs_RGB4to32(UWORD rgb4);
 /* Fill entry->ansi32[] from the legacy entry->color[] shadow. */
 void SitePrefs_DeriveAnsi32(struct PrefsStruct *entry);
 
+/* -- 256-colour palette records (deeper screens) -- */
+
+/* LoadRGB32 record-table ULONGs: (1 + 16*3) ANSI at 0, (1 + 16*3) UI
+ * at 16, plus the zero terminator. */
+#define SITE_PREFS_RGB32_TABLE 99
+
+/* 32-bit-fraction triplet to XRGB 0xRRGGBB00 (top byte of each). */
+ULONG SitePrefs_TripletToXRGB(ULONG r, ULONG g, ULONG b);
+
+/* XRGB 0xRRGGBB00 back to RGB4 0xRGB (top nibble per gun). */
+UWORD SitePrefs_XRGBtoRGB4(ULONG xrgb);
+
+/* Fill a LoadRGB32 record table (16 ANSI at 0, 16 UI at 16, terminated).
+ * Returns ULONGs written, 0 when tableLen is too small. */
+size_t SitePrefs_BuildRGB32Table(const ULONG ansi32[16], const ULONG ui32[16],
+                                 ULONG *table, size_t tableLen);
+
 /* "PROGDIR:Sites/<id>.prefs" into out; NULL when outLen is too small. */
 char *SitePrefs_FileName(ULONG id, char *out, size_t outLen);
 

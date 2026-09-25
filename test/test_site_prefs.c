@@ -283,8 +283,60 @@ static void test_derive_ansi32(void) {
 
 /* A 1.9.1 (DCS1) sidecar decodes: legacy prefix copied, ansi32[] derived
  * from the embedded color[] shadow. */
-static void test_sidecar_v1_legacy(void) {
-    struct PrefsStruct entry, back;
+static void test_triplet_and_back(void) {
+    /* GetRGB32 triplets are full 32-bit fractions (byte replicated). */
+    assert(SitePrefs_TripletToXRGB(0xDDDDDDDDUL, 0xDDDDDDDDUL, 0xDDDDDDDDUL)
+           == 0xDDDDDD00UL);
+    assert(SitePrefs_TripletToXRGB(0xFF000000UL, 0x00FF0000UL, 0x0000FF00UL)
+           == 0xFF000000UL);  /* top bytes only */
+    assert(SitePrefs_TripletToXRGB(0xFFFFFFFFUL, 0xFFFFFFFFUL, 0xFFFFFFFFUL)
+           == 0xFFFFFF00UL);
+    assert(SitePrefs_TripletToXRGB(0, 0, 0) == 0);
+
+    assert(SitePrefs_XRGBtoRGB4(0x11223300UL) == 0x123);
+    assert(SitePrefs_XRGBtoRGB4(0xFFFFFF00UL) == 0xFFF);
+    assert(SitePrefs_XRGBtoRGB4(0x00000000UL) == 0x000);
+    assert(SitePrefs_XRGBtoRGB4(0xDD000000UL) == 0xD00);
+}
+
+static void test_rgb32_table(void) {
+    ULONG ansi[16], ui[16], table[SITE_PREFS_RGB32_TABLE];
+    ULONG short_table[SITE_PREFS_RGB32_TABLE - 1];
+    size_t n;
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        ansi[i] = 0x11223300UL;
+        ui[i] = 0x0055AA00UL;
+    }
+
+    n = SitePrefs_BuildRGB32Table(ansi, ui, table, SITE_PREFS_RGB32_TABLE);
+    assert(n == SITE_PREFS_RGB32_TABLE);
+
+    /* ANSI record: count 16 from 0, then R/G/B triplets. */
+    assert(table[0] == (((ULONG)16 << 16) | 0));
+    assert(table[1] == 0x11111111UL);
+    assert(table[2] == 0x22222222UL);
+    assert(table[3] == 0x33333333UL);
+
+    /* UI record starts at 1 + 16*3 = 49: count 16 from 16. */
+    assert(table[49] == (((ULONG)16 << 16) | 16));
+    assert(table[50] == 0x00000000UL);
+    assert(table[51] == 0x55555555UL);
+    assert(table[52] == 0xAAAAAAAAUL);
+
+    /* Zero terminator. */
+    assert(table[98] == 0);
+
+    assert(SitePrefs_BuildRGB32Table(ansi, ui, short_table,
+                                     SITE_PREFS_RGB32_TABLE - 1) == 0);
+    assert(SitePrefs_BuildRGB32Table(NULL, ui, table,
+                                     SITE_PREFS_RGB32_TABLE) == 0);
+    assert(SitePrefs_BuildRGB32Table(ansi, ui, NULL,
+                                     SITE_PREFS_RGB32_TABLE) == 0);
+}
+
+static void test_sidecar_v1_legacy(void) {    struct PrefsStruct entry, back;
     UBYTE blob[4 + SITE_PREFS_V1_PREFIX + 8];
     size_t colorOff;
     UWORD legacyColor[16];
@@ -345,6 +397,8 @@ int main(void) {
     test_rgb4to32();
     test_derive_ansi32();
     test_sidecar_v1_legacy();
+    test_triplet_and_back();
+    test_rgb32_table();
     printf("site_prefs: all assertions passed\n");
     return 0;
 }

@@ -102,6 +102,50 @@ void SitePrefs_DeriveAnsi32(struct PrefsStruct *entry)
         entry->ansi32[i] = SitePrefs_RGB4to32(entry->color[i]);
 }
 
+ULONG SitePrefs_TripletToXRGB(ULONG r, ULONG g, ULONG b)
+{
+    return ((r >> 24) << 24) | ((g >> 24) << 16) | ((b >> 24) << 8);
+}
+
+UWORD SitePrefs_XRGBtoRGB4(ULONG xrgb)
+{
+    return (UWORD)(((xrgb >> 28) << 8) | (((xrgb >> 20) & 0xF) << 4) |
+                   ((xrgb >> 12) & 0xF));
+}
+
+size_t SitePrefs_BuildRGB32Table(const ULONG ansi32[16], const ULONG ui32[16],
+                                 ULONG *table, size_t tableLen)
+{
+    size_t pos = 0;
+    size_t i;
+    ULONG v;
+
+    if (ansi32 == NULL || ui32 == NULL || table == NULL ||
+        tableLen < SITE_PREFS_RGB32_TABLE)
+        return 0;
+
+    table[pos++] = ((ULONG)16 << 16) | 0;
+    for (i = 0; i < 16; i++)
+    {
+        v = ansi32[i];
+        table[pos++] = ((v >> 24) & 0xFF) * 0x01010101UL;
+        table[pos++] = ((v >> 16) & 0xFF) * 0x01010101UL;
+        table[pos++] = ((v >> 8) & 0xFF) * 0x01010101UL;
+    }
+
+    table[pos++] = ((ULONG)16 << 16) | 16;
+    for (i = 0; i < 16; i++)
+    {
+        v = ui32[i];
+        table[pos++] = ((v >> 24) & 0xFF) * 0x01010101UL;
+        table[pos++] = ((v >> 16) & 0xFF) * 0x01010101UL;
+        table[pos++] = ((v >> 8) & 0xFF) * 0x01010101UL;
+    }
+
+    table[pos++] = 0;
+    return pos;
+}
+
 size_t SitePrefs_Encode(const struct PrefsStruct *entry, UBYTE *out, size_t outLen)
 {
     size_t need = SitePrefs_EncodedSize();
