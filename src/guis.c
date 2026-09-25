@@ -811,13 +811,32 @@ static int OpenEditProfileWindow( void )
 }
 
 
-/* Refreshes the "Settings:" label in the edit window: "Global" or "Own (id N)". */
-static void EditSettingsLabel(char *labelBuf, size_t labelLen, ULONG settingsId)
+/* The entry's staged content, made visible: "Global" or e.g.
+ * "Own: PETSCII, WB". Reads the sidecar file when it exists; a freshly
+ * staged id (no file yet) describes the live prefs, which is exactly what
+ * OK will snapshot (nothing else can change them while modal). */
+static void EditSettingsSummary(ULONG settingsId, char *labelBuf, size_t labelLen)
 {
+    struct PrefsStruct entrySettings;
+    const struct PrefsStruct *s = &prefs;
+
     if (settingsId == 0)
+    {
         strlcpy(labelBuf, "Global", labelLen);
+    }
     else
-        mysprintf(labelBuf, "Own (id %lu)", settingsId);
+    {
+        if (LoadEntrySettings(settingsId, &entrySettings))
+            s = &entrySettings;
+        mysprintf(labelBuf, "Own: %s%s", (s->flags & FLAG_PETSCII_MODE) ? "PETSCII" : "ANSI",
+                  (s->flags & FLAG_USE_WORKBENCH) ? ", WB" : "");
+    }
+}
+
+/* Same, pushed into the live label (window must be open). */
+static void EditSettingsRefresh(char *labelBuf, size_t labelLen, ULONG settingsId)
+{
+    EditSettingsSummary(settingsId, labelBuf, labelLen);
     GT_SetGadgetAttrs(editProfileGadgets[GD_SETTINGS_LABEL], editProfileWnd, 0,
                       GTTX_Text, labelBuf, TAG_DONE);
 }
@@ -837,14 +856,14 @@ static void EditUseCurrentSettings(struct List *bookList, ULONG *newSettingsId,
             return;
         }
     }
-    EditSettingsLabel(labelBuf, labelLen, *newSettingsId);
+    EditSettingsRefresh(labelBuf, labelLen, *newSettingsId);
 }
 
 /* "Use Global Settings": drop the entry's settings on OK (file deleted). */
 static void EditUseGlobalSettings(ULONG *newSettingsId, char *labelBuf, size_t labelLen)
 {
     *newSettingsId = 0;
-    EditSettingsLabel(labelBuf, labelLen, 0);
+    EditSettingsRefresh(labelBuf, labelLen, 0);
 }
 
 /*
@@ -878,10 +897,7 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
     editProfileGTags[ETAG_PORT] = (unsigned long)book->port;
     editProfileGTags[ETAG_USERNAME] = (unsigned long)book->username;
     editProfileGTags[ETAG_PASSWORD] = (unsigned long)book->password;
-    if (newSettingsId == 0)
-        strlcpy(strSettings, "Global", sizeof(strSettings));
-    else
-        mysprintf(strSettings, "Own (id %lu)", newSettingsId);
+    EditSettingsSummary(newSettingsId, strSettings, sizeof(strSettings));
     editProfileGTags[ETAG_SETTINGS] = (unsigned long)strSettings;
 
     // Open the Edit Profile window
