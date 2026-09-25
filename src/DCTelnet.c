@@ -93,6 +93,7 @@ static struct NewMenu mainMenuDesc[] =
     {    NM_ITEM, "Scroll Back",                    "X",             0,               0, (APTR)MENU_SCROLLBACK},
     {    NM_ITEM, "Iconify",                        "&",             0,               0, (APTR)MENU_ICONIFY},
     {    NM_ITEM, "Display Speed Test",             "Y",             0,               0, (APTR)MENU_DISPLAY_SPEED_TEST},
+    {    NM_ITEM, "Probe Floods",                     0,             0,               0, (APTR)MENU_PROBE_FLOODS},
     {    NM_ITEM, "Finger",                         "@",             0,               0, (APTR)MENU_FINGER},
     {    NM_ITEM, NM_BARLABEL,                       0 ,             0,               0, (APTR)MENU_BAR1},
     {    NM_ITEM, "Reset Screen",                   "C",             0,               0, (APTR)MENU_RESET_SCREEN},
@@ -1206,7 +1207,91 @@ void LEDs(void)
 }
 
 
+
+/* AGA Phase-0 probe floods (feature/aga-probe scaffolding, NOT shipped):
+ * console.device baseline numbers the direct renderer must beat. All floods
+ * bracketed with CurrentTime like SpeedTest; B/s in millisecond math
+ * (bytes*1000000 would overflow ULONG). */
+static ULONG ProbeElapsedMs(ULONG bs, ULONG bm, ULONG es, ULONG em)
+{
+    ULONG elapsed;
+
+    if (em >= bm)
+        elapsed = (es - bs) * 1000000 + (em - bm);
+    else
+        elapsed = (es - bs - 1) * 1000000 + (1000000 - bm + em);
+    return elapsed / 1000 + 1;
+}
+
+static void ProbeReport(const char *tag, ULONG lines, ULONG bytes, ULONG elapsedMs)
+{
+    LocalFmt("%s: %ld lines/s, %ld B/s\r\n", tag,
+             lines * 1000 / elapsedMs, bytes * 1000 / elapsedMs);
+}
+
+static void ProbeFloods(void)
+{
+    static UBYTE probeLine[96];
+    static UBYTE probePetscii[240];
+    static UBYTE probeOut[4096];
+    ULONG bs, bm, es, em;
+    UWORD i;
+    ULONG n;
+
+    ConWrite("0 pm\f", 7);
+
+    /* 1. TEXT: long printable runs + scroll. */
+    memset(probeLine, 'X', 79);
+    probeLine[79] = '\r';
+    probeLine[80] = '\n';
+    CurrentTime(&bs, &bm);
+    for (i = 0; i < 200; i++)
+        ConWrite((char *)probeLine, 81);
+    CurrentTime(&es, &em);
+    ProbeReport("TEXT", 200, 200 * 81, ProbeElapsedMs(bs, bm, es, em));
+
+    /* 2. SCROLL: short lines, scroll-dominated. */
+    CurrentTime(&bs, &bm);
+    for (i = 0; i < 200; i++)
+        ConWrite("x\r\n", 3);
+    CurrentTime(&es, &em);
+    ProbeReport("SCROLL", 200, 200 * 3, ProbeElapsedMs(bs, bm, es, em));
+
+    /* 3. SGR: attribute-heavy lines (parse + fragmented runs). */
+    CurrentTime(&bs, &bm);
+    n = 0;
+    for (i = 0; i < 200; i++)
+    {
+        mysprintf((char *)probeLine, "0;1;36mLine %ldm\r\n", (LONG)i);
+        n += strlen((char *)probeLine);
+        ConWrite((char *)probeLine, strlen((char *)probeLine));
+    }
+    CurrentTime(&es, &em);
+    ProbeReport("SGR", 200, n, ProbeElapsedMs(bs, bm, es, em));
+
+    /* 4. TRANSLATOR: PETSCII bytes through the ANSI emitter, no console IO. */
+    for (i = 0; i < sizeof(probePetscii); i++)
+        probePetscii[i] = (UBYTE)(32 + (i % 128));
+    probePetscii[0] = 144;
+    probePetscii[1] = 18;
+    probePetscii[2] = 29;
+    probePetscii[3] = 147;
+    petscii_dispatch_init(&g_petsciiState, 40, 25);
+    CurrentTime(&bs, &bm);
+    n = 0;
+    for (i = 0; i < 500; i++)
+        n += petscii_stream_to_ansi(&g_petsciiState, probePetscii,
+                                    sizeof(probePetscii),
+                                    probeOut, sizeof(probeOut));
+    CurrentTime(&es, &em);
+    ProbeReport("TRANSLATOR", 0, n, ProbeElapsedMs(bs, bm, es, em));
+
+    ConWrite("1 p", 4);
+}
+
 static void SpeedTest(void)
+
+
 {
     ULONG before_s, before_micros;
     ULONG after_s, after_micros;
@@ -2393,6 +2478,10 @@ static void GetWindowMsg(struct Window *wwin)
 
                     case MENU_DISPLAY_SPEED_TEST:
                         SpeedTest();
+                        break;
+
+                    case MENU_PROBE_FLOODS:
+                        ProbeFloods();
                         break;
 
                     case MENU_FINGER:
