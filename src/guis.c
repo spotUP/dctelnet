@@ -12,6 +12,7 @@
 #include <proto/graphics.h>           // Move(), SetAPen(), Text(), SetFont(), Draw()
 #include <proto/gadtools.h>           // LISTVIEW_KIND, BUTTON_KIND, GTLV_Labels...
 #include <proto/icon.h>               // GetDiskObjectNew(), FreeDiskObject()
+#include <proto/layers.h>             // InstallLayerHook() (dialog base)
 #include <intuition/screens.h>          // BACKGROUNDPEN (dialog base paint)
 #ifdef __VBCC__
     #pragma popwarn
@@ -26,17 +27,34 @@
 #include "utils.h"
 #include "site_prefs.h"
 
-/* Gray dialog base on 256-colour screens: black TEXTPEN labels (sampled
- * from Workbench) are invisible on DCTelnet's legacy black dialog base.
+/* Gray dialog base on 256-colour screens: a BackFill hook, which paints
+ * only damaged areas and can never cover gadgets (a plain RectFill after
+ * OpenWindow demonstrably hid every GadTools frame on fullscreen while
+ * Workbench -- no fill -- stayed fine). Black TEXTPEN labels stay readable.
  * Fixed-size SMART_REFRESH dialogs keep the fill in their bitmap. */
+static ULONG DialogBackFillFunc(HOOK_A0 struct Hook *hook,
+                                HOOK_A2 APTR object,
+                                HOOK_A1 APTR message)
+{
+    struct RastPort *rp = (struct RastPort *)object;
+    struct Rectangle *bounds = (struct Rectangle *)((UBYTE *)message + sizeof(APTR));
+
+    if (UsePrivateUiPens() && drawInfo != NULL)
+    {
+        SetAPen(rp, drawInfo->dri_Pens[BACKGROUNDPEN]);
+        RectFill(rp, bounds->MinX, bounds->MinY, bounds->MaxX, bounds->MaxY);
+    }
+    return 0;
+}
+
+static struct Hook dialogBackFillHook =
+    { { NULL, NULL }, (HOOKFUNC)DialogBackFillFunc, NULL, NULL };
+
 void PaintDialogBackground(struct Window *wnd)
 {
-    if (wnd == NULL || !UsePrivateUiPens() || drawInfo == NULL)
+    if (wnd == NULL || wnd->WLayer == NULL || !UsePrivateUiPens())
         return;
-    SetAPen(wnd->RPort, drawInfo->dri_Pens[BACKGROUNDPEN]);
-    RectFill(wnd->RPort, wnd->BorderLeft, wnd->BorderTop,
-             wnd->Width - wnd->BorderRight - 1,
-             wnd->Height - wnd->BorderBottom - 1);
+    InstallLayerHook(wnd->WLayer, &dialogBackFillHook);
 }
 
 struct BookStruct

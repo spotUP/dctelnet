@@ -292,16 +292,6 @@ int stricmp(const char *a, const char *b)
 #include <intuition/sghooks.h>
 #include <devices/inputevent.h>
 
-#ifdef __VBCC__
-#define HOOK_A0 __reg("a0")
-#define HOOK_A1 __reg("a1")
-#define HOOK_A2 __reg("a2")
-#else
-#define HOOK_A0
-#define HOOK_A1
-#define HOOK_A2
-#endif
-
 static struct Gadget *lastKeyGadget = NULL;
 static struct Gadget *clickedGadget = NULL;   /* one-shot click suppress */
 
