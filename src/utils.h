@@ -11,6 +11,7 @@
 
 #include <exec/types.h>
 #include <string.h>
+#include <utility/hooks.h>   /* struct Hook (selectAllHook below) */
 
 // Types
 
@@ -24,6 +25,11 @@ void myctime(ULONG secs, char *outbuf, size_t maxLen);
 size_t strlcpy(char *dst, const char *src, size_t dstSize);
 size_t strlcat(char *dst, const char *src, size_t dstSize);
 void mysprintf(char *Buffer, char *ctl, ...);
+
+/* Shared GadTools string/integer EditHook emulating select-all-on-entry:
+ * the first printable keystroke after activation replaces the prefilled
+ * content (tab fix). Wired via GTST_EditHook/GTIN_EditHook tags. */
+extern struct Hook selectAllHook;
 
 #ifdef __VBCC__
 int stricmp(const char *a, const char *b);

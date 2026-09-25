@@ -579,15 +579,24 @@ static struct MyNewGadget editProfileNGad[] = {
 };
 
 static ULONG editProfileGTags[] = {
-    GTST_String, 0, (GTST_MaxChars), 31, (GT_Underscore), '_', (TAG_DONE),
-    GTST_String, 0, (GTST_MaxChars), 51, (GT_Underscore), '_', (TAG_DONE),
+    GTST_String, 0, (GTST_MaxChars), 31, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, 0, (GTST_MaxChars), 51, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
     GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE),
-    (GTIN_Number), 0, (GTIN_MaxChars), 9, (GT_Underscore), '_', (TAG_DONE),
-    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (TAG_DONE),
-    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (TAG_DONE)
+    (GTIN_Number), 0, (GTIN_MaxChars), 9, (GT_Underscore), '_', (GTIN_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE)
 };
+
+/* Initial-value slots in editProfileGTags (must match the table above;
+ * new gadgets go at the end so these never shift). */
+#define ETAG_SITE 1
+#define ETAG_ADDRESS 10
+#define ETAG_LAST 19
+#define ETAG_PORT 30
+#define ETAG_USERNAME 39
+#define ETAG_PASSWORD 48
 
 // Draw the Edit Address Book Profile window
 static int OpenEditProfileWindow( void )
@@ -666,13 +675,13 @@ static BOOL EditProfile(struct BookStruct *book)
     BOOL ret = FALSE;
 
     // Initialize gadget fields with current book data
-    editProfileGTags[1] = (unsigned long)book->name;
-    editProfileGTags[8] = (unsigned long)book->host;
+    editProfileGTags[ETAG_SITE] = (unsigned long)book->name;
+    editProfileGTags[ETAG_ADDRESS] = (unsigned long)book->host;
     myctime(book->lastConnect, strLastTime, sizeof(strLastTime));
-    editProfileGTags[15] = (unsigned long)strLastTime;
-    editProfileGTags[26] = (unsigned long)book->port;
-    editProfileGTags[33] = (unsigned long)book->username;
-    editProfileGTags[40] = (unsigned long)book->password;
+    editProfileGTags[ETAG_LAST] = (unsigned long)strLastTime;
+    editProfileGTags[ETAG_PORT] = (unsigned long)book->port;
+    editProfileGTags[ETAG_USERNAME] = (unsigned long)book->username;
+    editProfileGTags[ETAG_PASSWORD] = (unsigned long)book->password;
 
     // Open the Edit Profile window
     if(OpenEditProfileWindow() == RETURN_OK)
