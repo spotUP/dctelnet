@@ -49,6 +49,7 @@ static char MainWindowTitle[] =
 #include <arpa/telnet.h>
 #include "petscii_dispatch.h"
 #include "petscii_keymap.h"
+#include "petscii_local.h"
 #ifdef __VBCC__
     #pragma popwarn
 #endif
@@ -276,9 +277,27 @@ static void ConWrite(char *data, long len)
     }
 }
 
+/* Readable local texts under the PETSCII font: fold ASCII lowercase so
+ * status texts don't land on C64 graphics glyphs. BBS bytes never pass
+ * here (Receive writes them via ConWrite directly). */
+static char localScratch[2048];
+
+static BOOL PetsciiLocalActive(void)
+{
+    return (BOOL)((prefs.flags & FLAG_PETSCII_MODE) && drivertype == DRIVER_NORMAL);
+}
+
 void LocalPrint(char *data)
 {
-    ConWrite(data, strlen(data));
+    if (PetsciiLocalActive())
+    {
+        /* Literals can't be folded in place: copy (truncating). */
+        strlcpy(localScratch, data, sizeof(localScratch));
+        Petscii_MapLocalText(localScratch);
+        ConWrite(localScratch, strlen(localScratch));
+    }
+    else
+        ConWrite(data, strlen(data));
 }
 
 // WARNING: This function uses the same global buffer "buf" that is also used by recv() to receive
@@ -292,6 +311,8 @@ void LocalFmt(char *ctl, ...)
     #ifdef __VBCC__
     #pragma popwarn
     #endif
+    if (PetsciiLocalActive())
+        Petscii_MapLocalText((char *)buf);
     ConWrite(buf, strlen(buf));
 }
 
