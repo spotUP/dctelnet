@@ -61,6 +61,7 @@
 #include <stdarg.h>           // va_list, va_start(), va_end()
 #include <string.h>           // strlen(), memset(), size_t
 #include "requesters.h"
+#include "utils.h"   /* selectAllHook (tab select-all EditHook) */
 
 
 // Calling module must provide these:
@@ -93,7 +94,7 @@ static const TEXT ALERT_SECOND_LINE[] = "Press mouse button to continue";
  * for maximum compatibility with older Kickstart versions.
  *
  * If intuition.library cannot be opened, the function falls back to the Exec Alert() mechanism,
- * which may display a Guru Meditation–style error on very old systems.
+ * which may display a Guru Meditationï¿½style error on very old systems.
  *
  *
  * @param msg
@@ -151,7 +152,7 @@ VOID RecoveryAlert(CONST_STRPTR msg)
                 len++;
 
             max_copy = (msg[len] == '\0') ? len : (ALERT_MAX_DISPLAYABLE_CHARS - 3);
-            // -3 chars when we didn’t find the string NUL terminal char. The msg is too long and
+            // -3 chars when we didnï¿½t find the string NUL terminal char. The msg is too long and
             // 3 "." will truncate the message.
 
             // First line copy avoiding function calls to remain safe in low-memory / recovery context.
@@ -225,7 +226,7 @@ VOID InfoReq(struct Window *parent, CONST_STRPTR str, ...) // varargs parameters
         NULL,                       // es_TextFormat
         "OK"                        // es_GadgetFormat
     };
-    es.es_TextFormat = str;     // SAS/C won’t accept a non-literal when intializing a struct
+    es.es_TextFormat = str;     // SAS/C wonï¿½t accept a non-literal when intializing a struct
 
 
     if (IntuitionBase == NULL || IntuitionBase->LibNode.lib_Version < 36)  // we check at runtime
@@ -293,7 +294,7 @@ LONG ConfirmRequester(struct Window *parent, CONST_STRPTR gadgetFormat, CONST_ST
         NULL,                       // es_TextFormat
         NULL                        // es_GadgetFormat
     };
-    es.es_TextFormat = str;     // SAS/C won’t accept a non-literal when intializing a struct
+    es.es_TextFormat = str;     // SAS/C wonï¿½t accept a non-literal when intializing a struct
     es.es_GadgetFormat = gadgetFormat;
 
 
@@ -459,13 +460,13 @@ BOOL GetStringRequester(struct Window *parent, STRPTR title, STRPTR prompt,
     promptWidth = TextLength(rp, prompt, strlen(prompt));
     bufferWidth = TextLength(rp, buffer, strlen(buffer));
 
-    //  We’ll use the larger of the two widths to size the gadget:
+    //  Weï¿½ll use the larger of the two widths to size the gadget:
     fieldWidth = (promptWidth > bufferWidth) ? promptWidth : bufferWidth;
     fieldWidth += xMargin;
 
     buttonWidth  = TextLength(rp, "Cancel", strlen("Cancel")) + xMargin;
 
-    // Predict window’s titlebar height before calling OpenWindow():
+    // Predict windowï¿½s titlebar height before calling OpenWindow():
     titlebarHeight = screen->WBorTop + fontYsize + 1;
 
     // Calculate the required window size:
@@ -543,6 +544,7 @@ BOOL GetStringRequester(struct Window *parent, STRPTR title, STRPTR prompt,
     stringGad = gad = CreateGadget(STRING_KIND, gad, &ng,
         GTST_String,   buffer,
         GTST_MaxChars, maxLen - 1,  // UWORD
+        GTST_EditHook, &selectAllHook,
         TAG_DONE);
 
     if (gad == NULL) { InfoReq(parent, "CreateGadget() => NULL (failed)"); goto clean_and_return; }

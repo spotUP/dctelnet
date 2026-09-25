@@ -1032,16 +1032,16 @@ static struct MyNewGadget fKeysNGad[] = {
 };
 
 static ULONG fKeysGTags[] = {
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
     (GTCY_Labels), (ULONG)&MOD0Labels[ 0 ], (GA_Disabled), TRUE, (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE)
@@ -1127,7 +1127,7 @@ void FunctionKeys(void)
 
     // Initialize gadget fields with current settings:
     for (i = 0; i < F_KEY_COUNT; i++)
-        fKeysGTags[1 + i * 5] = (ULONG)&fKeys[i * F_KEY_SIZE];
+        fKeysGTags[1 + i * 7] = (ULONG)&fKeys[i * F_KEY_SIZE];
 
     // Open the Functions Keys window
     if(OpenFKeysWindow() == RETURN_OK)
