@@ -271,3 +271,82 @@ int stricmp(const char *a, const char *b)
     return (unsigned char)*a - (unsigned char)*b;
 }
 #endif
+
+/* Select-all-on-entry for GadTools string/integer gadgets (tab fix).
+ *
+ * GadTools has no select-all tag; the customization point is the EditHook
+ * (SGH_KEY per keystroke, SGH_CLICK on activation/click, see
+ * intuition/sghooks.h). One static hook serves all dialogs (single task,
+ * modal loops): entering a field arms replace for that gadget, the first
+ * printable keystroke (or Backspace/Delete) replaces/clears, anything else
+ * disarms. A genuine mouse click disarms so click-to-position keeps working.
+ *
+ * 68k note: the OS calls hooks with (a0=hook, a2=object, a1=message), hence
+ * the __reg() parameter convention below (vbcc).
+ */
+#include <intuition/sghooks.h>
+#include <devices/inputevent.h>
+
+#ifdef __VBCC__
+#define HOOK_A0 __reg("a0")
+#define HOOK_A1 __reg("a1")
+#define HOOK_A2 __reg("a2")
+#else
+#define HOOK_A0
+#define HOOK_A1
+#define HOOK_A2
+#endif
+
+static struct Gadget *armedGadget = NULL;
+
+static ULONG StringSelectAllFunc(HOOK_A0 struct Hook *hook,
+                                 HOOK_A2 APTR object,
+                                 HOOK_A1 APTR message)
+{
+    ULONG *cmd = (ULONG *)message;
+    struct SGWork *work = (struct SGWork *)object;
+
+    if (*cmd == SGH_CLICK)
+    {
+        if (work->IEvent == NULL ||
+            ((struct InputEvent *)work->IEvent)->ie_Class != IECLASS_RAWMOUSE)
+            armedGadget = work->Gadget;   /* TAB/shortcut/programmatic entry */
+        else if (armedGadget == work->Gadget)
+            armedGadget = NULL;           /* genuine click: keep cursor */
+        return 1;
+    }
+
+    if (*cmd != SGH_KEY)
+        return 0;
+
+    if (armedGadget == work->Gadget)
+    {
+        if (work->EditOp == EO_INSERTCHAR || work->EditOp == EO_REPLACECHAR)
+        {
+            /* The keystroke is pre-applied in WorkBuffer: replace the whole
+             * content with just the typed char (else it would be eaten). */
+            work->WorkBuffer[0] = (char)work->Code;
+            work->WorkBuffer[1] = '\0';
+            work->NumChars = 1;
+            work->BufferPos = 1;
+            if (work->Modes & SGM_LONGINT)
+                work->LongInt = (LONG)(work->Code - '0');
+            work->Actions |= SGA_REDISPLAY;
+        }
+        else if (work->EditOp == EO_DELBACKWARD || work->EditOp == EO_DELFORWARD)
+        {
+            /* Backspace/Delete on a fresh entry clears, like a selection. */
+            work->WorkBuffer[0] = '\0';
+            work->NumChars = 0;
+            work->BufferPos = 0;
+            if (work->Modes & SGM_LONGINT)
+                work->LongInt = 0;
+            work->Actions |= SGA_REDISPLAY;
+        }
+        armedGadget = NULL;
+    }
+
+    return 1;
+}
+
+struct Hook selectAllHook = { { NULL, NULL }, (HOOKFUNC)StringSelectAllFunc, NULL, NULL };

@@ -712,14 +712,14 @@ static struct MyNewGadget editProfileNGad[] = {
 };
 
 static ULONG editProfileGTags[] = {
-    GTST_String, 0, (GTST_MaxChars), 31, (GT_Underscore), '_', (TAG_DONE),
-    GTST_String, 0, (GTST_MaxChars), 51, (GT_Underscore), '_', (TAG_DONE),
+    GTST_String, 0, (GTST_MaxChars), 31, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, 0, (GTST_MaxChars), 51, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
     GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE),
-    (GTIN_Number), 0, (GTIN_MaxChars), 9, (GT_Underscore), '_', (TAG_DONE),
-    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (TAG_DONE),
-    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (TAG_DONE),
+    (GTIN_Number), 0, (GTIN_MaxChars), 9, (GT_Underscore), '_', (GTIN_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
     GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE)
@@ -728,12 +728,12 @@ static ULONG editProfileGTags[] = {
 /* Initial-value slots in editProfileGTags (must match the table above;
  * new gadgets go at the end so these never shift). */
 #define ETAG_SITE 1
-#define ETAG_ADDRESS 8
-#define ETAG_LAST 15
-#define ETAG_PORT 26
-#define ETAG_USERNAME 33
-#define ETAG_PASSWORD 40
-#define ETAG_SETTINGS 47
+#define ETAG_ADDRESS 10
+#define ETAG_LAST 19
+#define ETAG_PORT 30
+#define ETAG_USERNAME 39
+#define ETAG_PASSWORD 48
+#define ETAG_SETTINGS 57
 
 // Draw the Edit Address Book Profile window
 static int OpenEditProfileWindow( void )
@@ -1242,16 +1242,16 @@ static struct MyNewGadget fKeysNGad[] = {
 };
 
 static ULONG fKeysGTags[] = {
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
-    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
+    GTST_String, (ULONG) NULL, (GTST_MaxChars), F_KEY_SIZE-1, (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
     (GTCY_Labels), (ULONG)&MOD0Labels[ 0 ], (GA_Disabled), TRUE, (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE)
@@ -1337,7 +1337,7 @@ void FunctionKeys(void)
 
     // Initialize gadget fields with current settings:
     for (i = 0; i < F_KEY_COUNT; i++)
-        fKeysGTags[1 + i * 5] = (ULONG)&fKeys[i * F_KEY_SIZE];
+        fKeysGTags[1 + i * 7] = (ULONG)&fKeys[i * F_KEY_SIZE];
 
     // Open the Functions Keys window
     if(OpenFKeysWindow() == RETURN_OK)
