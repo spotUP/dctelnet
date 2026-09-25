@@ -172,6 +172,7 @@ struct IntuitionBase *IntuitionBase;
 struct GfxBase *GfxBase;
 struct Library *KeymapBase, *GadToolsBase, *AslBase, *SocketBase;
 struct Library *DiskfontBase, *IconBase, *WorkbenchBase, *UtilityBase;
+struct Library *LayersBase;
 
 struct Window *win, *scrollbackWin, *toolBarWin;
 static struct Window *packetWin;
@@ -1554,6 +1555,13 @@ int main(int argc, char *argv[])
                 "DCTelnet requires utility.library.");
         goto clean_exit;
     }
+    LayersBase = OpenLibrary("layers.library", 0);
+    if (LayersBase == NULL)
+    {
+        InfoReq(NULL, "layers library could not be opened.\n"
+                "DCTelnet requires layers.library.");
+        goto clean_exit;
+    }
 
 
     if (! LoadPrefs()) goto clean_exit;
@@ -1807,6 +1815,7 @@ clean_exit:
     if (DiskfontBase)  CloseLibrary(DiskfontBase);
     if (WorkbenchBase) CloseLibrary(WorkbenchBase);
     if (UtilityBase)   CloseLibrary(UtilityBase);
+    if (LayersBase)    CloseLibrary(LayersBase);
     if (GadToolsBase)  CloseLibrary(GadToolsBase);
     if (ReqToolsBase)  CloseLibrary((struct Library *) ReqToolsBase);
     if (AslBase)       CloseLibrary(AslBase);
