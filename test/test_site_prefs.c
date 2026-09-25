@@ -130,7 +130,10 @@ static void test_window_flags_restart_without_screen(void) {
     b = a; b.flags |= FLAG_JUMP_SCROLL;
     assert(SitePrefs_DisplayDiffers(&a, &b, &reopen) && reopen == FALSE);
 
-    b = a; b.color[0] = 0x0FFF;
+    b = a; b.color[0] = 0x0FFF;  /* legacy shadow still restarts */
+    assert(SitePrefs_DisplayDiffers(&a, &b, &reopen) && reopen == FALSE);
+
+    b = a; b.ansi32[0] = 0xFFFFFFFF;
     assert(SitePrefs_DisplayDiffers(&a, &b, &reopen) && reopen == FALSE);
 
     b = a; strcpy(b.displaydriver, "foo.xem");
@@ -195,7 +198,7 @@ static void test_sidecar_round_trip(void) {
     assert(SitePrefs_EncodedSize() == 4 + sizeof(struct PrefsStruct));
     n = SitePrefs_Encode(&entry, buf, sizeof(buf));
     assert(n == SitePrefs_EncodedSize());
-    assert(buf[0] == 'D' && buf[1] == 'C' && buf[2] == 'S' && buf[3] == '1');
+    assert(buf[0] == 'D' && buf[1] == 'C' && buf[2] == 'S' && buf[3] == '2');
 
     memset(&back, 0xAA, sizeof(back));
     assert(SitePrefs_Decode(buf, n, &back));
@@ -219,6 +222,12 @@ static void test_sidecar_rejects_bad_input(void) {
     assert(!SitePrefs_Decode(buf, n, &back));
     assert(memcmp(&back, canary, sizeof(back)) == 0);
     buf[0] = 'D';
+
+    buf[3] = '9';  /* unknown version */
+    memcpy(&back, canary, sizeof(back));
+    assert(!SitePrefs_Decode(buf, n, &back));
+    assert(memcmp(&back, canary, sizeof(back)) == 0);
+    buf[3] = '2';
 
     memcpy(&back, canary, sizeof(back));
     assert(!SitePrefs_Decode(buf, n - 1, &back));  /* truncated */
@@ -249,8 +258,62 @@ static void test_sidecar_ignores_trailing_bytes(void) {
     assert(memcmp(&back, &entry, sizeof(back)) == 0);
 }
 
-static void test_sidecar_file_name(void) {
-    char path[SITE_PREFS_PATH_LEN];
+static void test_rgb4to32(void) {
+    assert(SitePrefs_RGB4to32(0x000) == 0x00000000UL);
+    assert(SitePrefs_RGB4to32(0xFFF) == 0xFFFFFF00UL);
+    assert(SitePrefs_RGB4to32(0xD00) == 0xDD000000UL);
+    assert(SitePrefs_RGB4to32(0x0D0) == 0x00DD0000UL);
+    assert(SitePrefs_RGB4to32(0x00D) == 0x0000DD00UL);
+    assert(SitePrefs_RGB4to32(0x123) == 0x11223300UL);
+}
+
+static void test_derive_ansi32(void) {
+    struct PrefsStruct p;
+    int i;
+
+    memset(&p, 0, sizeof(p));
+    for (i = 0; i < 16; i++)
+        p.color[i] = (UWORD)(i * 0x111);
+    SitePrefs_DeriveAnsi32(&p);
+    for (i = 0; i < 16; i++)
+        assert(p.ansi32[i] == SitePrefs_RGB4to32((UWORD)(i * 0x111)));
+
+    SitePrefs_DeriveAnsi32(NULL);  /* must not crash */
+}
+
+/* A 1.9.1 (DCS1) sidecar decodes: legacy prefix copied, ansi32[] derived
+ * from the embedded color[] shadow. */
+static void test_sidecar_v1_legacy(void) {
+    struct PrefsStruct entry, back;
+    UBYTE blob[4 + SITE_PREFS_V1_PREFIX + 8];
+    size_t colorOff;
+    UWORD legacyColor[16];
+    int i;
+
+    make_entry(&entry);
+    for (i = 0; i < 16; i++)
+        legacyColor[i] = (UWORD)(0x100 + i);
+
+    colorOff = (size_t)((char *)entry.color - (char *)&entry);
+    assert(colorOff + sizeof(legacyColor) <= SITE_PREFS_V1_PREFIX);
+
+    blob[0] = 'D'; blob[1] = 'C'; blob[2] = 'S'; blob[3] = '1';
+    memcpy(blob + 4, &entry, SITE_PREFS_V1_PREFIX);
+    memcpy(blob + 4 + colorOff, legacyColor, sizeof(legacyColor));
+    for (i = 0; i < 8; i++)
+        blob[4 + SITE_PREFS_V1_PREFIX + i] = (UBYTE)i;
+
+    memset(&back, 0xAA, sizeof(back));
+    assert(SitePrefs_Decode(blob, sizeof(blob), &back));
+    assert(memcmp(&back, blob + 4, SITE_PREFS_V1_PREFIX) == 0);
+    for (i = 0; i < 16; i++)
+        assert(back.ansi32[i] == SitePrefs_RGB4to32(legacyColor[i]));
+
+    /* Short legacy blob: no settings. */
+    assert(!SitePrefs_Decode(blob, 4 + SITE_PREFS_V1_PREFIX - 1, &back));
+}
+
+static void test_sidecar_file_name(void) {    char path[SITE_PREFS_PATH_LEN];
     char tiny[8];
 
     assert(SitePrefs_FileName(1, path, sizeof(path)) == path);
@@ -279,6 +342,9 @@ int main(void) {
     test_sidecar_rejects_bad_input();
     test_sidecar_ignores_trailing_bytes();
     test_sidecar_file_name();
+    test_rgb4to32();
+    test_derive_ansi32();
+    test_sidecar_v1_legacy();
     printf("site_prefs: all assertions passed\n");
     return 0;
 }

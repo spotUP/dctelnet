@@ -1267,10 +1267,11 @@ BOOL LoadPrefs(void)
 {
     BPTR fh = Open(prefsFilename, MODE_OLDFILE);
     BOOL firsttime = FALSE;
+    LONG prefsBytes = 0;
 
     if(fh)
     {
-        if(Read(fh, &prefs, sizeof(struct PrefsStruct)) < 252) // IF OLD CONFIG FILE
+        if((prefsBytes = Read(fh, &prefs, sizeof(struct PrefsStruct))) < 252) // IF OLD CONFIG FILE
         {
             /*//prefs.win_left = 0;
             prefs.win_top = 11;
@@ -1341,6 +1342,11 @@ fixprefs:        //prefs.win_left = 0;
     if(prefs.sb_lines == 0) prefs.sb_lines = 300;
 
     if(prefs.displayidstr[0] == 0) strlcpy(prefs.displayidstr, "VT102", sizeof(prefs.displayidstr));
+
+    /* 1.9.1 prefs file (or older): no ansi32[] stored -- derive it from
+     * the legacy color[] shadow. A full-size read trusts the stored palette. */
+    if (prefsBytes < (LONG)sizeof(struct PrefsStruct))
+        SitePrefs_DeriveAnsi32(&prefs);
 
     /* No entry settings active at startup: effective == global. */
     globalPrefs = prefs;

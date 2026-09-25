@@ -65,9 +65,12 @@ BOOL SitePrefs_DisplayDiffers(const struct PrefsStruct *a,
     if (screen)
         return TRUE;
 
-    /* Windows-only restart: palette (LoadRGB4 in OpenAppWindow), XEM library
-     * (OpenDisplay windows section), packet/toolbar/jump-scroll windows. */
-    if (memcmp(a->color, b->color, sizeof(a->color)) != 0 ||
+    /* Windows-only restart: palette (LoadRGB32 in OpenAppWindow), XEM library
+     * (OpenDisplay windows section), packet/toolbar/jump-scroll windows.
+     * Both palette generations are compared: the editor writes color[]
+     * until phase 3 keeps ansi32[] in sync with it. */
+    if (memcmp(a->ansi32, b->ansi32, sizeof(a->ansi32)) != 0 ||
+        memcmp(a->color, b->color, sizeof(a->color)) != 0 ||
         strcmp(a->displaydriver, b->displaydriver) != 0 ||
         (changedFlags & SITE_PREFS_RESTART_FLAGS) != 0)
         return TRUE;
@@ -78,6 +81,25 @@ BOOL SitePrefs_DisplayDiffers(const struct PrefsStruct *a,
 size_t SitePrefs_EncodedSize(void)
 {
     return 4 + sizeof(struct PrefsStruct);
+}
+
+ULONG SitePrefs_RGB4to32(UWORD rgb4)
+{
+    ULONG r = (ULONG)((rgb4 >> 8) & 0xF) * 17;
+    ULONG g = (ULONG)((rgb4 >> 4) & 0xF) * 17;
+    ULONG b = (ULONG)(rgb4 & 0xF) * 17;
+
+    return (r << 24) | (g << 16) | (b << 8);
+}
+
+void SitePrefs_DeriveAnsi32(struct PrefsStruct *entry)
+{
+    int i;
+
+    if (entry == NULL)
+        return;
+    for (i = 0; i < 16; i++)
+        entry->ansi32[i] = SitePrefs_RGB4to32(entry->color[i]);
 }
 
 size_t SitePrefs_Encode(const struct PrefsStruct *entry, UBYTE *out, size_t outLen)
@@ -91,7 +113,7 @@ size_t SitePrefs_Encode(const struct PrefsStruct *entry, UBYTE *out, size_t outL
     out[0] = 'D';
     out[1] = 'C';
     out[2] = 'S';
-    out[3] = '1';
+    out[3] = '2';
     memcpy(out + 4, entry, sizeof(*entry));
     return need;
 }
@@ -100,14 +122,31 @@ BOOL SitePrefs_Decode(const UBYTE *in, size_t inLen, struct PrefsStruct *entry)
 {
     if (in == NULL || entry == NULL)
         return FALSE;
-    if (inLen < SitePrefs_EncodedSize())
+    if (inLen < 4)
         return FALSE;
-    if (in[0] != 'D' || in[1] != 'C' || in[2] != 'S' || in[3] != '1')
+    if (in[0] != 'D' || in[1] != 'C' || in[2] != 'S')
         return FALSE;
 
-    /* Trailing bytes (newer fields) are ignored. */
-    memcpy(entry, in + 4, sizeof(*entry));
-    return TRUE;
+    if (in[3] == '2')
+    {
+        if (inLen < SitePrefs_EncodedSize())
+            return FALSE;
+        /* Trailing bytes (newer fields) are ignored. */
+        memcpy(entry, in + 4, sizeof(*entry));
+        return TRUE;
+    }
+
+    if (in[3] == '1')
+    {
+        /* 1.9.1 sidecar: legacy prefix, no ansi32[] -- derive it. */
+        if (inLen < 4 + SITE_PREFS_V1_PREFIX)
+            return FALSE;
+        memcpy(entry, in + 4, SITE_PREFS_V1_PREFIX);
+        SitePrefs_DeriveAnsi32(entry);
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 char *SitePrefs_FileName(ULONG id, char *out, size_t outLen)

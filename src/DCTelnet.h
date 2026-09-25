@@ -32,6 +32,11 @@ struct PrefsStruct
     char  displayidstr[32];
     UWORD toolBarWin_left,
           toolBarWin_top;
+    /* Deeper screens (256-colour AGA/RTG): XRGB 0xRRGGBB00 ANSI palette,
+     * programmed with LoadRGB32. APPEND-ONLY: the first 376 bytes are the
+     * 1.9.1 layout (old binaries, books and sidecars keep working).
+     * color[16] above stays as the RGB4 legacy shadow. */
+    ULONG ansi32[16];
 };
 
 /*
