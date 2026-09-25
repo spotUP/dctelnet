@@ -10,7 +10,7 @@ const char __ver[] = "$VER: DCTelnet " DCTELNET_VERSION " " __AMIGADATE__;
 #define BUILD_HASH unknown
 #endif
 
-// Stringify macroï¿½:
+// Stringify macro :
 #define STR_(x) #x
 #define STR(x) STR_(x)
 
@@ -50,8 +50,8 @@ static char MainWindowTitle[] =
 #include <arpa/telnet.h>
 #include "petscii_dispatch.h"
 #include "petscii_keymap.h"
-#include "site_prefs.h"
 #include "petscii_local.h"
+#include "site_prefs.h"
 #ifdef __VBCC__
     #pragma popwarn
 #endif
@@ -65,7 +65,7 @@ static char MainWindowTitle[] =
 
 #define ESC_CHAR '\x1B'  // ASCII Escape character (decimal 27, octal 033)
 #define ESC_STR  "\x1B"  // ASCII Escape character (decimal 27, octal 033) as a C string
-#define CSI_CHAR '\x9B'  // Amiga console CSI=Control Sequence Introducer ('ï¿½', decimal 155,
+#define CSI_CHAR '\x9B'  // Amiga console CSI=Control Sequence Introducer ('›', decimal 155,
                          // octal 233) cf. Amiga ROM Kernel Reference Manual v2.04 - Devices (1991),
                          // section "Control Sequences for Window Output"
 #define DEL_CHAR '\x7F'  // ASCII DEL character (decimal 127, octal 177)
@@ -377,7 +377,7 @@ long TCPSend(const char *buf, long len)
 /**
  * @brief Display a busy/wait mouse pointer in the specified window.
  *
- * Replaces the window's current pointer with a custom 16ï¿½16 "wait" pointer to indicate that a modal
+ * Replaces the window's current pointer with a custom 16×16 "wait" pointer to indicate that a modal
  * operation or lengthy processing is in progress.
  *
  * The pointer remains active until removed with ClearPointer().
@@ -561,9 +561,9 @@ static void DisConnect(char remote, char quiet)
         {
             register ULONG spent;
             if(remote)
-                LocalPrint("ï¿½m\r\nConnection closed by foreign host");
+                LocalPrint("›m\r\nConnection closed by foreign host");
             else
-                LocalPrint("ï¿½m\r\nConnection closed");
+                LocalPrint("›m\r\nConnection closed");
             spent = mytime() - conectionTime;
             LocalFmt(". %02ld:%02ld:%02ld spent online.\r\n", spent/3600, (spent/60)%60, spent%60);
         }
@@ -735,7 +735,7 @@ static BOOL ChooseScreen(char firsttime)
 
     if(firsttime)
     {
-        prefs.DisplayID     = (PAL_MONITOR_ID | HIRES_KEY); // PAL High Res (640ï¿½256), no interlaced
+        prefs.DisplayID     = (PAL_MONITOR_ID | HIRES_KEY); // PAL High Res (640×256), no interlaced
         prefs.DisplayWidth  = 640;
         prefs.DisplayHeight = 256;
         prefs.DisplayDepth  = 4;
@@ -851,8 +851,8 @@ struct Scroll
  *
  * Some CSI sequences (notably 'C', 'H', and 'B') require prematurely flushing the current buffer.
  * To avoid duplicating the line?finalization logic, the function uses three goto jumps that
- * redirect execution to the common ï¿½addï¿½ block. This structure triggers VBCC warning 175 (ï¿½this
- * code is weirdï¿½) when optimization is enabled, hence the conditional suppression pragma.
+ * redirect execution to the common “add” block. This structure triggers VBCC warning 175 (“this
+ * code is weird”) when optimization is enabled, hence the conditional suppression pragma.
  *
  * @param str   Pointer to the raw input byte buffer.
  * @param size  Number of bytes to process from the buffer.
@@ -1191,13 +1191,13 @@ static void SpeedTest(void)
     register UWORD i;
     char *rating;
 
-    // "ï¿½0 p" = 9B 30 20 70 : Set Cursor Rendition -> make cursor invisible
+    // "›0 p" = 9B 30 20 70 : Set Cursor Rendition -> make cursor invisible
     //                        (disabling the cursor slightly improves output speed)
-    // "ï¿½m"   = 9B 6D        : Select Graphic Rendition -> reset attributes (white on black)
+    // "›m"   = 9B 6D        : Select Graphic Rendition -> reset attributes (white on black)
     // "\f"   = 0x0C (FF)    : Form Feed -> clear the window
     // Reference: Amiga ROM Kernel Reference Manual v2.04 - Devices (1991),
     //            section "Control Sequences for Window Output"
-    ConWrite("ï¿½0 pï¿½m\f", 7);
+    ConWrite("›0 p›m\f", 7);
 
     if(drivertype && isRunningOnWB)  // if XEM Enabled running on Workbench
     {
@@ -1214,7 +1214,7 @@ static void SpeedTest(void)
     CurrentTime(&after_s, &after_micros);
 
     // set cursor visible
-    ConWrite("ï¿½1 p", 4);
+    ConWrite("›1 p", 4);
 
     if (after_micros >= before_micros)
     {
@@ -1625,7 +1625,7 @@ int main(int argc, char *argv[])
                 FD_SET(tcpSocket, &rd);
                 sigmask = SIGBREAKF_CTRL_C | SIGBREAKF_CTRL_F | iconsig;
 
-                // https://wiki.amigaos.net/amiga/autodocs/bsdsocket.doc.txt (tout ï¿½ la fin)
+                // https://wiki.amigaos.net/amiga/autodocs/bsdsocket.doc.txt (tout à la fin)
                 // WaitSelect() should probably return the time remaining from the original timeout,
                 // if any, by modifying the time value in place. This may be implemented in future
                 // versions of the system. Thus, it is unwise to assume that the timeout value will
@@ -1715,7 +1715,7 @@ int main(int argc, char *argv[])
 
                 if(i != 0)
                 {
-                    // Draw when Title bar AND LEDs are enabledï¿½:
+                    // Draw when Title bar AND LEDs are enabled :
                     if((prefs.flags & (FLAG_HIDE_TITLEBAR | FLAG_HIDE_LEDS)) == 0)
                     {
                         SetAPen(&scr->RastPort, 10);
@@ -2007,13 +2007,13 @@ static void SetLocalEchoBack(BOOL wantedState)
     BOOL currentState = prefs.flags & FLAG_LOCAL_ECHO;
 
     #ifdef _DEBUG
-        PutStr("ï¿½34m--> SetLocalEchoBack()ï¿½m\n");
+        PutStr("›34m--> SetLocalEchoBack()›m\n");
     #endif
 
     if (currentState != wantedState)
     {
         #ifdef _DEBUG
-            PutStr("ï¿½34mcurrentState != wantedStateï¿½m\n");
+            PutStr("›34mcurrentState != wantedState›m\n");
         #endif
         ClearMenuStrip(win);
 
@@ -2233,7 +2233,7 @@ static void GetWindowMsg(struct Window *wwin)
                         case 'V':
                             if(qual&IEQUALIFIER_RCOMMAND)
                             {
-                                ConWrite("ï¿½ v", 3);
+                                ConWrite("› v", 3);
                                 break;
                             }*/
                         default:
@@ -2491,7 +2491,7 @@ static void GetWindowMsg(struct Window *wwin)
                     case MENU_STRIP_ANSI_CODES:
                         UpdatePrefsFlagFromMenu(item, FLAG_STRIP_COLOUR);
                         #ifndef _LEGACY_RECEIVE
-                            if(item->Flags & CHECKED) LocalPrint("ï¿½m");
+                            if(item->Flags & CHECKED) LocalPrint("›m");
                         #endif
                         break;
 
@@ -2864,7 +2864,7 @@ static UWORD EstablishTCPConnection(char *servername, UWORD port)
     UpdateConnectingWindowMessage("Looking up...", 4);
     UpdateConnectingWindowMessage(servername, 0);
 
-    LocalFmt("\r\nLooking up ï¿½32m%sï¿½m... ", servername);
+    LocalFmt("\r\nLooking up ›32m%s›m... ", servername);
 
     if (servername != server)
         strlcpy(server, servername, sizeof(server));
@@ -2909,12 +2909,12 @@ static UWORD EstablishTCPConnection(char *servername, UWORD port)
     strlcpy(strIPAddress, Inet_NtoA(inetSocketAddr.sin_addr.s_addr), sizeof(strIPAddress));
     strlcpy(strOfficialName, hostAddr->h_name, sizeof(strOfficialName));
 
-    LocalFmt("Found ï¿½36m%sï¿½m (official name: ï¿½32m%s)ï¿½m\r\n", strIPAddress, strOfficialName);
+    LocalFmt("Found ›36m%s›m (official name: ›32m%s)›m\r\n", strIPAddress, strOfficialName);
 
     UpdateConnectingWindowMessage(strIPAddress, 1);
     UpdateConnectingWindowMessage(strOfficialName, 2);
 
-    LocalFmt("Connecting to ï¿½36m%sï¿½m port ï¿½35m%ldï¿½m...\r\n", strIPAddress, port);
+    LocalFmt("Connecting to ›36m%s›m port ›35m%ld›m...\r\n", strIPAddress, port);
 
     tcpSocket = socket(AF_INET, SOCK_STREAM, 0);
     if(tcpSocket == -1)
@@ -3095,7 +3095,7 @@ struct Screen* OpenAppScreen(void)
             TAG_END);
         /*
         scr = OpenScreenTags(NULL,
-            SA_Title,    "DCTelnet 1.5 ï¿½ "__DATE__" By ZED^DC",
+            SA_Title,    "DCTelnet 1.5 © "__DATE__" By ZED^DC",
             SA_Width,    prefs.DisplayWidth,
             SA_Height,    prefs.DisplayHeight,
             SA_DisplayID,    prefs.DisplayID,
@@ -3164,7 +3164,7 @@ void OpenAppWindow(void)
         // on the screen the program does not need to hold the screen lock, as the window acts as a
         // lock on the screen.  The pointer to the screen structure is valid as long as a lock on
         // the screen is held by the application, or the application has a window open on the
-        // screen (Amiga ROM Kernel Reference Manual, ï¿½ Accessing a public screen by name)
+        // screen (Amiga ROM Kernel Reference Manual, § Accessing a public screen by name)
         UnlockPubScreen(0L, scr);
 
         if(prefs.flags & FLAG_TOOL_BAR) OpenToolBarWindow(FALSE);
@@ -3538,11 +3538,11 @@ BOOL OpenDisplay(void)
         else
             dispEngine = "ibmcon.device";
 
-        LocalFmt("ï¿½0;1;36m\f\r\n\r\n"
-                "Processor: ï¿½37m680%lc0\r\n\r\nï¿½36m"
-                "Kickstart: ï¿½37m%ld.%ld\r\n\r\nï¿½36m"
-                "Display engine: ï¿½37m%s\r\n\r\nï¿½36m"
-                "TCP Stack: ï¿½37m",
+        LocalFmt("›0;1;36m\f\r\n\r\n"
+                "Processor: ›37m680%lc0\r\n\r\n›36m"
+                "Kickstart: ›37m%ld.%ld\r\n\r\n›36m"
+                "Display engine: ›37m%s\r\n\r\n›36m"
+                "TCP Stack: ›37m",
                 cpu,
                 (LONG)((struct Library *)SysBase)->lib_Version,
                 (LONG)SysBase->SoftVer,
@@ -3557,10 +3557,10 @@ BOOL OpenDisplay(void)
             if(po) po[0] = '\0';
 
             LocalPrint(buf);
-            LocalPrint("ï¿½m\r\n\r\n");
+            LocalPrint("›m\r\n\r\n");
         }
         else
-            LocalPrint("ï¿½31mNot activeï¿½m\r\n\r\n");
+            LocalPrint("›31mNot active›m\r\n\r\n");
     }
 
 
