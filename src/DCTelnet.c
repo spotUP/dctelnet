@@ -132,6 +132,7 @@ static struct NewMenu mainMenuDesc[] =
     {    NM_ITEM, "Raw Connection",                 "7", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_RAW_CONNECTION},
     {    NM_ITEM, "Jump Scroll",                    "8", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_JUMP_SCROLL},
     {    NM_ITEM, "PETSCII Mode",                    "9", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_PETSCII_MODE},
+    {    NM_ITEM, "Save Settings to Address Book Entry", 0, 0, 0, (APTR)MENU_SAVE_ENTRY_SETTINGS},
 
     { NM_TITLE, "Settings",                          0 ,             0,               0, (APTR)MENU_SETTINGS},
     {    NM_ITEM, "Screen Mode..",                  "S",             0,               0, (APTR)MENU_SCREEN_MODE},
@@ -501,6 +502,28 @@ WORD GetMenuNumberFromID(enum MenuItemID id)
 }
 
 
+/* "Save Settings to Address Book Entry" is only enabled while connected
+ * to an entry with settings of its own. CreateAppMenus sets the template
+ * state on every OpenDisplay, so this only refreshes the live strip
+ * after a connect/disconnect that did not reopen the display. */
+static void RefreshEntrySettingsMenuItem(void)
+{
+    struct MenuItem *item;
+
+    if (win == NULL)
+        return;
+    item = GetMenuItemFromID(MENU_SAVE_ENTRY_SETTINGS);
+    if (item == NULL)
+        return;
+
+    ClearMenuStrip(win);
+    if (sessionSettingsId != 0)
+        item->Flags |= ITEMENABLED;
+    else
+        item->Flags &= ~ITEMENABLED;
+    ResetMenuStrip(win, mainMenuStrip);
+}
+
 static void DisConnect(char remote, char quiet)
 {
     if(isConnected)
@@ -559,6 +582,7 @@ static void DisConnect(char remote, char quiet)
                 if (!OpenDisplay())
                     shouldQuitApp = TRUE;
             }
+            RefreshEntrySettingsMenuItem();
         }
     }
 }
@@ -596,6 +620,7 @@ void ApplyEntrySettings(const struct PrefsStruct *entry, ULONG settingsId)
         if (!OpenDisplay())
             shouldQuitApp = TRUE;
     }
+    RefreshEntrySettingsMenuItem();
 }
 
 void SavePrefs(void)
@@ -2476,6 +2501,19 @@ static void GetWindowMsg(struct Window *wwin)
                         shouldReopenScreen = TRUE;
                         break;
 
+                    case MENU_SAVE_ENTRY_SETTINGS:
+                        /* Enabled only while connected to an entry with
+                         * settings of its own: snapshot the live session
+                         * settings into it (the tweak-and-save flow). */
+                        if (sessionSettingsId != 0)
+                        {
+                            if (SaveEntrySettings(sessionSettingsId, &prefs))
+                                SimpleReq("Settings saved to this Address Book entry.");
+                            else
+                                SimpleReq("Could not save the entry settings (PROGDIR:Sites).");
+                        }
+                        break;
+
                     case MENU_SCREEN_MODE:
                         oldDispID = prefs.DisplayID;
                         oldDepth  = prefs.DisplayDepth;
@@ -3152,6 +3190,14 @@ void CreateAppMenus(void)
     SetNewMenuCheckFromPref(MENU_RAW_CONNECTION,       FLAG_RAW_CONNECTION);
     SetNewMenuCheckFromPref(MENU_JUMP_SCROLL,          FLAG_JUMP_SCROLL);
     SetNewMenuCheckFromPref(MENU_PETSCII_MODE,         FLAG_PETSCII_MODE);
+
+    /* "Save Settings to Address Book Entry" starts disabled; the live
+     * strip is refreshed on connect/disconnect (see above). */
+    {
+        struct NewMenu *entryItem = GetNewMenuItemFromID(MENU_SAVE_ENTRY_SETTINGS);
+        if (entryItem != NULL)
+            entryItem->nm_Flags = (sessionSettingsId != 0) ? 0 : NM_ITEMDISABLED;
+    }
 
 
     // Gadtools CreateMenuA() generates a list of Intuition Menu structs.

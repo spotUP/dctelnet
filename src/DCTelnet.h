@@ -112,6 +112,7 @@ enum MenuItemID
     MENU_RAW_CONNECTION,
     MENU_JUMP_SCROLL,
     MENU_PETSCII_MODE,
+    MENU_SAVE_ENTRY_SETTINGS,
 
     MENU_SETTINGS,
     MENU_SCREEN_MODE,
@@ -193,6 +194,7 @@ void SavePrefs(void);
 void CommitPrefs(void);   /* prefs -> globalPrefs, unless entry settings are active */
 void DisconnectBeforeEntryConnect(void);   /* Address Book: end live session first */
 void ApplyEntrySettings(const struct PrefsStruct *entry, ULONG settingsId);
+BOOL SaveEntrySettings(ULONG settingsId, const struct PrefsStruct *settings);
 void SimpleReq(char *str);
 void SetWaitPointer(struct Window * window);
 UWORD BeginServerConnection(char *servername, UWORD port);

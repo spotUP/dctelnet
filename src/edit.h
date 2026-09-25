@@ -9,6 +9,9 @@
 #define GD_PORT                                5
 #define GD_USERNAME                            6
 #define GD_PASSWORD                            7
+#define GD_SETTINGS_LABEL                      8
+#define GD_USE_CURRENT                         9
+#define GD_USE_GLOBAL                          10
 
 #define GDX_SITE                               0
 #define GDX_ADDRESS                            1
@@ -18,6 +21,6 @@
 #define GDX_USERNAME                           6
 #define GDX_PASSWORD                           7
 
-#define editProfile_CNT 8
+#define editProfile_CNT 11
 
 #endif /* EDIT_H */

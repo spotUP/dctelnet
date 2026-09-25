@@ -46,7 +46,7 @@ struct BookStruct
  * version: a size change silently misreads every existing DCTelnet.Book. */
 typedef char BookStruct_size_check[sizeof(struct BookStruct) == 256 ? 1 : -1];
 
-static BOOL EditProfile(struct BookStruct *book);
+static BOOL EditProfile(struct BookStruct *book, struct List *bookList);
 
 
 static struct Window         *aBookWnd;           // "Address Book" window
@@ -594,7 +594,7 @@ delete:
 edit:
                         if(worknode = FindNode(listviewlist, lastcode))
                         {
-                            if(EditProfile((struct BookStruct *)worknode->ln_Name))
+                            if(EditProfile((struct BookStruct *)worknode->ln_Name, listviewlist))
                             {
                                 GT_SetGadgetAttrs(aBookGadgets[GD_LIST],aBookWnd,0,GTLV_Labels,listviewlist,GTLV_Selected,lastcode,TAG_DONE);
                                 save = TRUE;
@@ -610,7 +610,7 @@ add:
                             strlcpy(book->name, "*new site*", sizeof(book->name));
                             strlcpy(book->host, "*ip/host here*", sizeof(book->host));
                             book->port = 23;
-                            if(EditProfile(book))
+                            if(EditProfile(book, listviewlist))
                             {
                                 worknode = AllocMem(sizeof(struct Node), MEMF_PUBLIC|MEMF_CLEAR);
                                 if(worknode)
@@ -679,9 +679,9 @@ add:
 
 static struct Window         *editProfileWnd;           // "Edit Address Book Profile" window
 static struct Gadget         *editProfileGList;         // "Edit Address Book Profile" window GList
-static struct Gadget         *editProfileGadgets[8];    // "Edit Address Book Profile" window gadgets
+static struct Gadget         *editProfileGadgets[11];   // "Edit Address Book Profile" window gadgets
 #define editProfileWidth 450
-#define editProfileHeight 103
+#define editProfileHeight 128
 
 static UBYTE editProfileGTypes[] = {
     STRING_KIND,
@@ -691,18 +691,24 @@ static UBYTE editProfileGTypes[] = {
     BUTTON_KIND,
     INTEGER_KIND,
     STRING_KIND,
-    STRING_KIND
+    STRING_KIND,
+    TEXT_KIND,
+    BUTTON_KIND,
+    BUTTON_KIND
 };
 
 static struct MyNewGadget editProfileNGad[] = {
     120, 5, 317, 13, (UBYTE *)"_Site Name:",
     120, 21, 317, 13, (UBYTE *)"_Address:",
     121, 37, 177, 13, (UBYTE *)"Last Called:",
-    3, 88, 101, 13, (UBYTE *)"_Ok",
-    345, 88, 101, 13, (UBYTE *)"_Cancel",
+    3, 113, 101, 13, (UBYTE *)"_Ok",
+    345, 113, 101, 13, (UBYTE *)"_Cancel",
     365, 37, 72, 13, (UBYTE *)"_Port:",
     120, 53, 317, 13, (UBYTE *)"_Username:",
     120, 68, 317, 13, (UBYTE *)"Pass_word:",
+    120, 83, 177, 13, (UBYTE *)"Settings:",
+    3, 98, 180, 13, (UBYTE *)"Use Curren_t Settings",
+    267, 98, 180, 13, (UBYTE *)"Use _Global Settings",
 };
 
 static ULONG editProfileGTags[] = {
@@ -713,8 +719,21 @@ static ULONG editProfileGTags[] = {
     (GT_Underscore), '_', (TAG_DONE),
     (GTIN_Number), 0, (GTIN_MaxChars), 9, (GT_Underscore), '_', (TAG_DONE),
     GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (TAG_DONE),
-    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (TAG_DONE)
+    GTST_String, 0, (GTST_MaxChars), 41, (GT_Underscore), '_', (TAG_DONE),
+    GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE),
+    (GT_Underscore), '_', (TAG_DONE),
+    (GT_Underscore), '_', (TAG_DONE)
 };
+
+/* Initial-value slots in editProfileGTags (must match the table above;
+ * new gadgets go at the end so these never shift). */
+#define ETAG_SITE 1
+#define ETAG_ADDRESS 8
+#define ETAG_LAST 15
+#define ETAG_PORT 26
+#define ETAG_USERNAME 33
+#define ETAG_PASSWORD 40
+#define ETAG_SETTINGS 47
 
 // Draw the Edit Address Book Profile window
 static int OpenEditProfileWindow( void )
@@ -768,11 +787,47 @@ static int OpenEditProfileWindow( void )
     DrawBevelBox( editProfileWnd->RPort, OffX + ComputeX( 3 ),
                     OffY + ComputeY( 1 ),
                     ComputeX( 444 ),
-                    ComputeY( 86 ),
+                    ComputeY( 111 ),
                     GT_VisualInfo, visualInfos, TAG_DONE );
     return( 0L );
 }
 
+
+/* Refreshes the "Settings:" label in the edit window: "Global" or "Own (id N)". */
+static void EditSettingsLabel(char *labelBuf, size_t labelLen, ULONG settingsId)
+{
+    if (settingsId == 0)
+        strlcpy(labelBuf, "Global", labelLen);
+    else
+        mysprintf(labelBuf, "Own (id %lu)", settingsId);
+    GT_SetGadgetAttrs(editProfileGadgets[GD_SETTINGS_LABEL], editProfileWnd, 0,
+                      GTTX_Text, labelBuf, TAG_DONE);
+}
+
+/* "Use Current Settings": the entry gets its own settings on OK (a fresh
+ * id when it has none). The snapshot itself is written on OK, from the
+ * live effective prefs. */
+static void EditUseCurrentSettings(struct List *bookList, ULONG *newSettingsId,
+                                   char *labelBuf, size_t labelLen)
+{
+    if (*newSettingsId == 0)
+    {
+        *newSettingsId = AllocEntrySettingsId(bookList);
+        if (*newSettingsId == 0)
+        {
+            SimpleReq("Could not allocate a settings id.");
+            return;
+        }
+    }
+    EditSettingsLabel(labelBuf, labelLen, *newSettingsId);
+}
+
+/* "Use Global Settings": drop the entry's settings on OK (file deleted). */
+static void EditUseGlobalSettings(ULONG *newSettingsId, char *labelBuf, size_t labelLen)
+{
+    *newSettingsId = 0;
+    EditSettingsLabel(labelBuf, labelLen, 0);
+}
 
 /*
 Opens the Edit Address Book Profile dialog.
@@ -782,9 +837,11 @@ Updates the book structure only if the user validates the changes.
 return TRUE  if the user validated the changes (OK)
        FALSE if the user cancelled or closed the window
  */
-static BOOL EditProfile(struct BookStruct *book)
+static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
 {
     char strLastTime[2 * LEN_DATSTRING];
+    char strSettings[24];
+    ULONG newSettingsId;
     struct IntuiMessage *message;
     struct Gadget *gad;
     ULONG class;
@@ -792,14 +849,22 @@ static BOOL EditProfile(struct BookStruct *book)
     char subdone = FALSE;
     BOOL ret = FALSE;
 
+    // The entry's settings id, staged until OK (Cancel changes nothing).
+    newSettingsId = book->settingsId;
+
     // Initialize gadget fields with current book data
-    editProfileGTags[1] = (unsigned long)book->name;
-    editProfileGTags[8] = (unsigned long)book->host;
+    editProfileGTags[ETAG_SITE] = (unsigned long)book->name;
+    editProfileGTags[ETAG_ADDRESS] = (unsigned long)book->host;
     myctime(book->lastConnect, strLastTime, sizeof(strLastTime));
-    editProfileGTags[15] = (unsigned long)strLastTime;
-    editProfileGTags[26] = (unsigned long)book->port;
-    editProfileGTags[33] = (unsigned long)book->username;
-    editProfileGTags[40] = (unsigned long)book->password;
+    editProfileGTags[ETAG_LAST] = (unsigned long)strLastTime;
+    editProfileGTags[ETAG_PORT] = (unsigned long)book->port;
+    editProfileGTags[ETAG_USERNAME] = (unsigned long)book->username;
+    editProfileGTags[ETAG_PASSWORD] = (unsigned long)book->password;
+    if (newSettingsId == 0)
+        strlcpy(strSettings, "Global", sizeof(strSettings));
+    else
+        mysprintf(strSettings, "Own (id %lu)", newSettingsId);
+    editProfileGTags[ETAG_SETTINGS] = (unsigned long)strSettings;
 
     // Open the Edit Profile window
     if(OpenEditProfileWindow() == RETURN_OK)
@@ -846,6 +911,12 @@ static BOOL EditProfile(struct BookStruct *book)
                         case 'P':  vgad = editProfileGadgets[GD_PORT];        break;
                         case 'U':  vgad = editProfileGadgets[GD_USERNAME];    break;
                         case 'W':  vgad = editProfileGadgets[GD_PASSWORD];    break;
+                        case 'T':  EditUseCurrentSettings(bookList, &newSettingsId,
+                                                          strSettings, sizeof(strSettings));
+                                   break;
+                        case 'G':  EditUseGlobalSettings(&newSettingsId,
+                                                         strSettings, sizeof(strSettings));
+                                   break;
                     }
                     if(vgad) ActivateGadget(vgad, editProfileWnd, 0); // Focus gadget
                     break;
@@ -860,6 +931,14 @@ static BOOL EditProfile(struct BookStruct *book)
                     case GD_CANCEL:
                         subdone = TRUE;
                         ret = FALSE;
+                        break;
+                    case GD_USE_CURRENT:
+                        EditUseCurrentSettings(bookList, &newSettingsId,
+                                               strSettings, sizeof(strSettings));
+                        break;
+                    case GD_USE_GLOBAL:
+                        EditUseGlobalSettings(&newSettingsId,
+                                              strSettings, sizeof(strSettings));
                         break;
                     }
                     break;
@@ -883,6 +962,19 @@ static BOOL EditProfile(struct BookStruct *book)
             strlcpy(book->password,
                     ((struct StringInfo *)editProfileGadgets[GD_PASSWORD]->SpecialInfo)->Buffer,
                     sizeof(book->password));
+
+            /* Per-entry settings (issue #10), staged by the dialog buttons:
+             * a dropped id deletes its sidecar, a kept or new id snapshots
+             * the live effective prefs. Cancel above skipped all of this. */
+            if (newSettingsId != book->settingsId)
+            {
+                if (book->settingsId != 0)
+                    DeleteEntrySettings(book->settingsId);
+                book->settingsId = newSettingsId;
+            }
+            if (newSettingsId != 0
+                && !SaveEntrySettings(newSettingsId, &prefs))
+                SimpleReq("Could not save the entry settings (PROGDIR:Sites).");
         }
 
         ClearPointer(aBookWnd); // Restore normal pointer
