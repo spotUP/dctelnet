@@ -27,3 +27,5 @@ build/DCTelnet*.lha
 # Host-built PETSCII test binaries
 test/test_petscii_*
 !test/test_petscii_*.c
+test/test_site_prefs
+!test/test_site_prefs.c

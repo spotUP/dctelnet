@@ -3,7 +3,7 @@
 CC := cc
 CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 
-TESTS := test_petscii_modules test_petscii_dispatch
+TESTS := test_petscii_modules test_petscii_dispatch test_site_prefs
 
 .PHONY: all clean check-encoding check-fonts
 all: $(TESTS) check-encoding check-fonts
@@ -32,6 +32,11 @@ test_petscii_modules: test_petscii_modules.c $(MODULE_SRC) $(MODULE_HDR)
 test_petscii_dispatch: test_petscii_dispatch.c ../src/petscii_dispatch.c ../src/petscii_dispatch.h \
                        ../src/petscii_screencode.c ../src/petscii_fallback.c $(MODULE_HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^)
+
+# site_prefs.h pulls in DCTelnet.h, which needs Amiga exec/types.h;
+# test/host carries a tiny shim for the host build only.
+test_site_prefs: test_site_prefs.c ../src/site_prefs.c ../src/site_prefs.h ../src/DCTelnet.h host/exec/types.h
+	$(CC) $(CFLAGS) -Ihost -o $@ $(filter %.c,$^)
 
 clean:
 	rm -f $(TESTS)

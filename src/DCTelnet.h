@@ -143,6 +143,8 @@ extern struct Menu *mainMenuStrip;
 extern struct MsgPort *iconPort;
 extern struct NewWindow newWin;
 extern struct PrefsStruct prefs;
+extern struct PrefsStruct globalPrefs;  /* Saved to DCTelnet.Prefs; restored on disconnect */
+extern ULONG sessionSettingsId;         /* 0 = no Address Book entry settings active */
 extern struct List *scrollbackList;
 extern struct Screen *scr;
 extern struct TextFont *ansiFont;
@@ -188,6 +190,7 @@ void TextFmt(struct RastPort *rP, char *ctl, ...);
 void LocalPrint(char *data);
 void OpenIcon(void);                                    // inconify the application
 void SavePrefs(void);
+void CommitPrefs(void);   /* prefs -> globalPrefs, unless entry settings are active */
 void SimpleReq(char *str);
 void SetWaitPointer(struct Window * window);
 UWORD BeginServerConnection(char *servername, UWORD port);

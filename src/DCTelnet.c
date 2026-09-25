@@ -201,6 +201,23 @@ enum    {    GAD_SCROLLER,
 
 struct PrefsStruct prefs;
 
+/* Per-entry settings (upstream issue #10): `prefs` is the effective
+ * session state every reader uses; `globalPrefs` is what LoadPrefs()
+ * fills and SavePrefs() writes. While connected to an entry with
+ * settings of its own, `prefs` holds the entry snapshot and only
+ * `globalPrefs` reaches the disk. */
+struct PrefsStruct globalPrefs;
+ULONG sessionSettingsId = 0;    /* 0 = no entry settings active */
+
+/* Record a user-made settings change: it always lands in the effective
+ * `prefs`, and also in `globalPrefs` unless entry settings are active
+ * (then the change is session-only and dies on disconnect). */
+void CommitPrefs(void)
+{
+    if (sessionSettingsId == 0)
+        globalPrefs = prefs;
+}
+
 static BPTR fileHandle;
 long nScrollbackLines;
 static long indexInScrollBuffer;
@@ -530,7 +547,8 @@ void SavePrefs(void)
     fileHandle = Open(prefsFilename, MODE_NEWFILE);
     if(fileHandle)
     {
-        Write(fileHandle, &prefs, sizeof(struct PrefsStruct));
+        /* The file only ever holds the GLOBAL settings. */
+        Write(fileHandle, &globalPrefs, sizeof(struct PrefsStruct));
         Close(fileHandle);
     }
 }
@@ -644,6 +662,8 @@ static BOOL ChooseScreen(char firsttime)
     }
 
     // On first time init, returning FALSE prevents the preferences from being written to disk.
+    if (result)
+        CommitPrefs();
     return result;
 }
 
@@ -666,6 +686,7 @@ static void ChoosePalette(void)
                 prefs.color[i] = GetRGB4(scr->ViewPort.ColorMap, i);
                 i++;
             }
+            CommitPrefs();
         }
         rtFreeRequest(reqinfo);
     }
@@ -1227,6 +1248,7 @@ fixprefs:        //prefs.win_left = 0;
             prefs.sb_top = 12;
             prefs.sb_width = 640;
             prefs.sb_height = (prefs.DisplayHeight / 2) - 4;
+            globalPrefs = prefs;    /* First-time defaults are global by definition. */
             SavePrefs();
         }
         else
@@ -1238,6 +1260,9 @@ fixprefs:        //prefs.win_left = 0;
     if(prefs.sb_lines == 0) prefs.sb_lines = 300;
 
     if(prefs.displayidstr[0] == 0) strlcpy(prefs.displayidstr, "VT102", sizeof(prefs.displayidstr));
+
+    /* No entry settings active at startup: effective == global. */
+    globalPrefs = prefs;
 
     // Loads the macro function keys config file if present:
     fh = Open(keysFilename, MODE_OLDFILE);
@@ -1822,11 +1847,15 @@ static void UpdatePrefsFlagFromMenu(struct MenuItem *item, ULONG flag)
         prefs.flags |= flag;
     else
         prefs.flags &= ~flag;
+    CommitPrefs();
 }
 
 /*
  Uncheck a menu item and clear the corresponding flag in prefs.flags,
  or check the menu item and set the flag, depending on the "wantedState" parameter.
+ Server-driven callers (telnet ECHO negotiation) stay session-only:
+ deliberately no CommitPrefs(), so a negotiated Local Echo never leaks
+ into the saved globals.
  https://amigadev.elowar.com/read/ADCD_2.1/Includes_and_Autodocs_2._guide/node024A.html
  https://www.amiga-news.de/en/news/AN-2023-10-00017-EN.html
 */
@@ -2410,6 +2439,7 @@ static void GetWindowMsg(struct Window *wwin)
                         {
                             shouldRestart = TRUE;
                             shouldReopenScreen = TRUE;
+                            CommitPrefs();
                         }
                         break;
 
@@ -2420,6 +2450,7 @@ static void GetWindowMsg(struct Window *wwin)
                     case MENU_DOWNLOAD_PATH:
                         DirectoryRequester(isRunningOnWB ? NULL : win,
                                            prefs.downloadpath, sizeof(prefs.downloadpath));
+                        CommitPrefs();
                         break;
 
                     case MENU_TRANSFER_PROTOCOL:
@@ -2428,6 +2459,7 @@ static void GetWindowMsg(struct Window *wwin)
                                       prefs.xferlibrary, sizeof(prefs.xferlibrary),
                                       "xpr#?.library",
                                       FILEREQ_LOAD);
+                        CommitPrefs();
                         break;
 
                     case MENU_PROTOCOL_OPTIONS:
@@ -2436,6 +2468,7 @@ static void GetWindowMsg(struct Window *wwin)
                                                     "Options string:",
                                                     prefs.xferinit, sizeof(prefs.xferinit));
                         // TODO Open XPR options Dialog : XferOptions(prefs.xferlibrary);
+                        CommitPrefs();
                         break;
 
                     case MENU_FUNCTION_KEYS:
@@ -2450,6 +2483,7 @@ static void GetWindowMsg(struct Window *wwin)
                                           FILEREQ_LOAD))
                         {
                             if(prefs.flags & FLAG_USE_XEM_LIBRARY) shouldRestart = TRUE;
+                            CommitPrefs();
                         }
                         break;
 
@@ -2466,11 +2500,13 @@ static void GetWindowMsg(struct Window *wwin)
                                                     "Telnet Display ID...",
                                                     "Term type:",
                                                     prefs.displayidstr, sizeof(prefs.displayidstr));
+                        CommitPrefs();
                         break;
 
                     case MENU_SCROLLBACK_LINES:
                         InitializeReqToolsLib(reqtoolsTags);
                         rtGetLongA(&prefs.sb_lines, "ScrollBack Lines..", NULL, (struct TagItem *)&reqtoolsTags);
+                        CommitPrefs();
                         break;
 
                     case MENU_SNAPSHOT_WINDOWS:
@@ -2491,6 +2527,8 @@ static void GetWindowMsg(struct Window *wwin)
                             prefs.toolBarWin_left = toolBarWin->LeftEdge;
                             prefs.toolBarWin_top = toolBarWin->TopEdge;
                         }
+
+                        CommitPrefs();
 
                         break;
 
@@ -3131,6 +3169,7 @@ BOOL OpenDisplay(void)
         InfoReq(NULL,"Unable to open the screen. Please restart DCTelnet\n"
                      "and select an appropriate screen mode");
         prefs.DisplayID = DEFAULT_MONITOR_ID;
+        CommitPrefs();    /* The failure marker must reach the saved globals. */
         SavePrefs();
 
         goto clean_and_return;

@@ -1108,6 +1108,7 @@ void Upload(char *library)
 
     // Save the directory in which files where selected to be uploaded:
     strlcpy(prefs.uploadpath, fr->rf_Dir, sizeof(prefs.uploadpath));
+    CommitPrefs();    /* Remember the last upload dir in the saved globals. */
     SavePrefs();
 
     strlcpy(buf, fr->rf_Dir,  sizeof(buf));
