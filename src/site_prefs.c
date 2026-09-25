@@ -146,6 +146,75 @@ size_t SitePrefs_BuildRGB32Table(const ULONG ansi32[16], const ULONG ui32[16],
     return pos;
 }
 
+/* dri_Pens slot order (intuition/screens.h) for the UI block. */
+#define UIP_TEXT 2
+#define UIP_SHINE 3
+#define UIP_SHADOW 4
+#define UIP_FILL 5
+#define UIP_FILLTEXT 6
+#define UIP_BACKGROUND 7
+
+#define UIP_CLASH_DELTA 250
+
+static ULONG ui_luminance(ULONG xrgb)
+{
+    ULONG r = (xrgb >> 24) & 0xFF;
+    ULONG g = (xrgb >> 16) & 0xFF;
+    ULONG b = (xrgb >> 8) & 0xFF;
+
+    return (r * 30 + g * 59 + b * 11) / 100;
+}
+
+static int ui_clash(ULONG a, ULONG b)
+{
+    ULONG la = ui_luminance(a), lb = ui_luminance(b);
+
+    return (la > lb ? la - lb : lb - la) < UIP_CLASH_DELTA;
+}
+
+/* Black or white, whichever contrasts base most. */
+static ULONG ui_pick(ULONG base)
+{
+    ULONG l = ui_luminance(base);
+
+    return (255 - l) >= l ? 0xFFFFFF00UL : 0x00000000UL;
+}
+
+void SitePrefs_FixUiContrast(ULONG ui32[16])
+{
+    ULONG base;
+
+    if (ui32 == NULL)
+        return;
+
+    base = ui32[UIP_BACKGROUND];
+
+    /* Text readable on the base. */
+    if (ui_clash(ui32[UIP_TEXT], base))
+        ui32[UIP_TEXT] = ui_pick(base);
+
+    /* Bevels distinct from the base... */
+    if (ui_clash(ui32[UIP_SHINE], base))
+        ui32[UIP_SHINE] = ui_pick(base);
+    if (ui_clash(ui32[UIP_SHADOW], base))
+        ui32[UIP_SHADOW] = ui_pick(base);
+
+    /* ...and from each other (a flat bevel reads as no bevel). */
+    if (ui_clash(ui32[UIP_SHINE], ui32[UIP_SHADOW]))
+    {
+        if (ui_luminance(ui32[UIP_SHINE]) >= 128)
+            ui32[UIP_SHADOW] = 0x00000000UL;
+        else
+            ui32[UIP_SHINE] = 0xFFFFFF00UL;
+    }
+
+    /* Button faces off the base, text off the face. */
+    /* Button faces may equal the base (authentic WB look -- faces read via
+     * bevel + text), but face text must contrast the face. */
+    if (ui_clash(ui32[UIP_FILLTEXT], ui32[UIP_FILL]))
+        ui32[UIP_FILLTEXT] = ui_pick(ui32[UIP_FILL]);
+}
+
 size_t SitePrefs_Encode(const struct PrefsStruct *entry, UBYTE *out, size_t outLen)
 {
     size_t need = SitePrefs_EncodedSize();

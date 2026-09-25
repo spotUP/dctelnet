@@ -3062,11 +3062,15 @@ static void SampleWorkbenchUiColors(ULONG ui32[16])
 
     wb = LockPubScreen("Workbench");
     if (wb == NULL)
+    {
+        SitePrefs_FixUiContrast(ui32);
         return;
+    }
     wbDraw = GetScreenDrawInfo(wb);
     if (wbDraw == NULL)
     {
         UnlockPubScreen(NULL, wb);
+        SitePrefs_FixUiContrast(ui32);
         return;
     }
     for (i = 0; i < 12; i++)
@@ -3076,6 +3080,9 @@ static void SampleWorkbenchUiColors(ULONG ui32[16])
     }
     FreeScreenDrawInfo(wb, wbDraw);
     UnlockPubScreen(NULL, wb);
+
+    /* WB-flat themes camouflage bevels/faces: enforce contrast. */
+    SitePrefs_FixUiContrast(ui32);
 }
 
 struct Screen* OpenAppScreen(void)

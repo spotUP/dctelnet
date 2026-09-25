@@ -336,6 +336,71 @@ static void test_rgb32_table(void) {
                                      SITE_PREFS_RGB32_TABLE) == 0);
 }
 
+static ULONG t_lum(ULONG x) {
+    return (((x >> 24) & 0xFF) * 30 + (((x >> 16) & 0xFF) * 59) +
+            (((x >> 8) & 0xFF) * 11)) / 100;
+}
+
+static int t_clash(ULONG a, ULONG b) {
+    ULONG la = t_lum(a), lb = t_lum(b);
+    return (la > lb ? la - lb : lb - la) < 48;
+}
+
+/* Flat gray theme (the reported failure): everything readable after. */
+static void test_contrast_flat_theme(void) {
+    ULONG ui[16];
+    ULONG snapshot[16];
+    int i;
+
+    for (i = 0; i < 16; i++)
+        ui[i] = 0x99999900UL;
+    ui[7] = 0x99999900UL;  /* gray base */
+
+    SitePrefs_FixUiContrast(ui);
+
+    assert(!t_clash(ui[2], ui[7]));   /* text vs base */
+    assert(!t_clash(ui[6], ui[5]));   /* button text vs face */
+    assert(!t_clash(ui[3], ui[7]));   /* shine vs base */
+    assert(!t_clash(ui[4], ui[7]));   /* shadow vs base */
+    assert(!t_clash(ui[3], ui[4]));   /* bevel has two sides */
+    /* face may equal base (authentic WB): readability comes from bevel+text */
+
+    /* Idempotent: a second pass changes nothing. */
+    memcpy(snapshot, ui, sizeof(ui));
+    SitePrefs_FixUiContrast(ui);
+    assert(memcmp(snapshot, ui, sizeof(ui)) == 0);
+}
+
+/* Healthy classic theme passes through untouched. */
+static void test_contrast_healthy_untouched(void) {
+    ULONG ui[16] = {
+        0x0055AA00UL, 0xFFFFFF00UL, 0x00000000UL, 0xFFFFFF00UL,
+        0x00000000UL, 0x99999900UL, 0x00000000UL, 0x99999900UL,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    ULONG snapshot[16];
+
+    memcpy(snapshot, ui, sizeof(ui));
+    SitePrefs_FixUiContrast(ui);
+    assert(memcmp(snapshot, ui, sizeof(ui)) == 0);
+
+    SitePrefs_FixUiContrast(NULL);  /* must not crash */
+}
+
+/* Black base (dark theme): light text chosen. */
+static void test_contrast_dark_base(void) {
+    ULONG ui[16];
+    int i;
+
+    for (i = 0; i < 16; i++)
+        ui[i] = 0x00000000UL;
+
+    SitePrefs_FixUiContrast(ui);
+
+    assert(!t_clash(ui[2], ui[7]));
+    assert(t_lum(ui[2]) > 200);  /* text went light */
+}
+
 static void test_sidecar_v1_legacy(void) {    struct PrefsStruct entry, back;
     UBYTE blob[4 + SITE_PREFS_V1_PREFIX + 8];
     size_t colorOff;
@@ -399,6 +464,9 @@ int main(void) {
     test_sidecar_v1_legacy();
     test_triplet_and_back();
     test_rgb32_table();
+    test_contrast_flat_theme();
+    test_contrast_healthy_untouched();
+    test_contrast_dark_base();
     printf("site_prefs: all assertions passed\n");
     return 0;
 }

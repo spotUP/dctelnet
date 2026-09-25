@@ -74,6 +74,14 @@ UWORD SitePrefs_XRGBtoRGB4(ULONG xrgb);
 size_t SitePrefs_BuildRGB32Table(const ULONG ansi32[16], const ULONG ui32[16],
                                  ULONG *table, size_t tableLen);
 
+/* Enforce readable contrast inside a 16-entry UI palette (dri_Pens order
+ * for slots 0-11: DETAIL/BLOCK/TEXT/SHINE/SHADOW/FILL/FILLTEXT/BACKGROUND
+ * at 0-7): TEXT readable on BACKGROUND, FILLTEXT on FILL, SHINE/SHADOW
+ * distinct from each other and the base, FILL shaded off the base.
+ * Repairs pick black/white by luminance, so any WB theme stays readable.
+ * Idempotent. Pure; host-tested. */
+void SitePrefs_FixUiContrast(ULONG ui32[16]);
+
 /* "PROGDIR:Sites/<id>.prefs" into out; NULL when outLen is too small. */
 char *SitePrefs_FileName(ULONG id, char *out, size_t outLen);
 
