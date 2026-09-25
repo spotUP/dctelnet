@@ -781,7 +781,9 @@ static int OpenEditProfileWindow( void )
 
     editProfileWnd = OpenWindow(&newWin);
     if(!editProfileWnd) return( 4L );
-    PaintDialogBackground(editProfileWnd);
+    /* DIAGNOSTIC 2026-09-25: base fill disabled here only -- do the field
+     * frames and buttons come back? (Address Book keeps its fill.) */
+    /* PaintDialogBackground(editProfileWnd); */
 
     /*if ( ! ( editProfileWnd = OpenWindowTags( NULL,
                 WA_Left,    (scr->Width - x) / 2,
