@@ -448,6 +448,8 @@ void AddressBook(void)
     char ret = FALSE;
     char save = FALSE;
     char subdone = FALSE;
+    struct PrefsStruct entrySettings;
+    BOOL haveEntrySettings = FALSE;
 
     listviewlist = AllocMem(sizeof(struct List), MEMF_PUBLIC|MEMF_CLEAR);
     if(!listviewlist) return;
@@ -636,6 +638,16 @@ add:
     // Initiate connection if requested
     if(ret)
     {
+        /* Per-entry settings (issue #10): end any live session first (this
+         * restores the globals), then install this entry's settings and
+         * reopen the display when they need it -- all BEFORE connecting. */
+        haveEntrySettings = conbook->settingsId != 0
+            && LoadEntrySettings(conbook->settingsId, &entrySettings);
+
+        DisconnectBeforeEntryConnect();
+        ApplyEntrySettings(haveEntrySettings ? &entrySettings : NULL,
+                           haveEntrySettings ? conbook->settingsId : 0);
+
         tcpPort = conbook->port;
         if(BeginServerConnection(conbook->host, conbook->port) == RETURN_OK)
         {

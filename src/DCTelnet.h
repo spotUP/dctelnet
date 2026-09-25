@@ -191,6 +191,8 @@ void LocalPrint(char *data);
 void OpenIcon(void);                                    // inconify the application
 void SavePrefs(void);
 void CommitPrefs(void);   /* prefs -> globalPrefs, unless entry settings are active */
+void DisconnectBeforeEntryConnect(void);   /* Address Book: end live session first */
+void ApplyEntrySettings(const struct PrefsStruct *entry, ULONG settingsId);
 void SimpleReq(char *str);
 void SetWaitPointer(struct Window * window);
 UWORD BeginServerConnection(char *servername, UWORD port);

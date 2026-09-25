@@ -49,6 +49,7 @@ static char MainWindowTitle[] =
 #include <arpa/telnet.h>
 #include "petscii_dispatch.h"
 #include "petscii_keymap.h"
+#include "site_prefs.h"
 #ifdef __VBCC__
     #pragma popwarn
 #endif
@@ -539,6 +540,61 @@ static void DisConnect(char remote, char quiet)
         }
 
         LEDs();
+
+        /* Per-entry settings (issue #10): the session ends, the globals
+         * return. The display is reopened when the effective settings
+         * differed -- unless we're quitting, when it is torn down next.
+         * Covers menu, remote-close and error disconnects alike. */
+        if (sessionSettingsId != 0)
+        {
+            BOOL reopenScreen = FALSE;
+            BOOL needsRestart = SitePrefs_DisplayDiffers(&prefs, &globalPrefs, &reopenScreen);
+
+            SitePrefs_RestoreGlobal(&prefs, &globalPrefs);
+            sessionSettingsId = 0;
+
+            if (needsRestart && !shouldQuitApp)
+            {
+                CloseDisplay(reopenScreen);
+                if (!OpenDisplay())
+                    shouldQuitApp = TRUE;
+            }
+        }
+    }
+}
+
+/* Ends any live session before the Address Book connects elsewhere.
+ * EstablishTCPConnection() opens with DisConnect(), which restores the
+ * globals -- freshly applied entry settings must go on after it. */
+void DisconnectBeforeEntryConnect(void)
+{
+    DisConnect(FALSE, FALSE);
+}
+
+/* Address Book connect path (guis.c): install the entry's settings as the
+ * effective prefs BEFORE BeginServerConnection (D2), reopening the
+ * display first when they need it. A NULL entry (or id 0) means the
+ * global settings: anything active is switched off. */
+void ApplyEntrySettings(const struct PrefsStruct *entry, ULONG settingsId)
+{
+    BOOL reopenScreen = FALSE;
+    BOOL needsRestart;
+
+    if (entry == NULL || settingsId == 0)
+    {
+        sessionSettingsId = 0;
+        return;
+    }
+
+    SitePrefs_ApplyEntry(&prefs, &globalPrefs, entry);
+    sessionSettingsId = settingsId;
+
+    needsRestart = SitePrefs_DisplayDiffers(&globalPrefs, &prefs, &reopenScreen);
+    if (needsRestart)
+    {
+        CloseDisplay(reopenScreen);
+        if (!OpenDisplay())
+            shouldQuitApp = TRUE;
     }
 }
 
