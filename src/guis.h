@@ -3,9 +3,9 @@
 
 #include <exec/types.h>
 
-/* Gray dialog base on 256-colour screens (see uiPens[] in DCTelnet.c).
- * No-op anywhere else. Call after OpenWindow, before GT_RefreshWindow. */
-void PaintDialogBackground(struct Window *wnd);
+/* Gray dialog base on 256-colour screens, installed via WA_BackFill at
+ * window creation (gray from birth -- never painted over gadgets). */
+extern struct Hook dialogBackFillHook;
 
 /* TEMPORARY DIAGNOSTIC: state snapshot at dialog open (PROGDIR:Dlg.txt). */
 void DlgDump(const char *which, int ngadgets);

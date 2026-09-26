@@ -12,7 +12,6 @@
 #include <proto/graphics.h>           // Move(), SetAPen(), Text(), SetFont(), Draw()
 #include <proto/gadtools.h>           // LISTVIEW_KIND, BUTTON_KIND, GTLV_Labels...
 #include <proto/icon.h>               // GetDiskObjectNew(), FreeDiskObject()
-#include <proto/layers.h>             // InstallLayerHook() (dialog base)
 #include <intuition/screens.h>          // BACKGROUNDPEN (dialog base paint)
 #include <graphics/displayinfo.h>       // DisplayInfo/DimensionInfo (mode cycle)
 #include <graphics/modeid.h>            // INVALID_ID
@@ -52,39 +51,25 @@ static ULONG DialogBackFillFunc(HOOK_A0 struct Hook *hook,
         saveBg = rp->BgPen;
         saveMd = rp->DrawMode;
         SetAPen(rp, drawInfo->dri_Pens[BACKGROUNDPEN]);
-        RectFill(rp, bounds->MinX, bounds->MinY, bounds->MaxX, bounds->MaxY);
-        SetAPen(rp, saveFg);
-        SetBPen(rp, saveBg);
-        SetDrMd(rp, saveMd);
     }
+    else
+    {
+        /* Legacy black base, exactly what the default backfill did. */
+        saveFg = rp->FgPen;
+        saveBg = rp->BgPen;
+        saveMd = rp->DrawMode;
+        SetAPen(rp, 0);
+    }
+    RectFill(rp, bounds->MinX, bounds->MinY, bounds->MaxX, bounds->MaxY);
+    SetAPen(rp, saveFg);
+    SetBPen(rp, saveBg);
+    SetDrMd(rp, saveMd);
     return 0;
 }
 
-static struct Hook dialogBackFillHook =
+struct Hook dialogBackFillHook =
     { { NULL, NULL }, (HOOKFUNC)DialogBackFillFunc, NULL, NULL };
 
-void PaintDialogBackground(struct Window *wnd)
-{
-    ULONG saveFg;
-    ULONG saveBg;
-    UBYTE saveMd;
-
-    if (wnd == NULL || wnd->WLayer == NULL || !UsePrivateUiPens() || drawInfo == NULL)
-        return;
-    /* Initial base now (the hook below only fires on future damage).
-     * Save/restore RPort pens (see DialogBackFillFunc). */
-    saveFg = wnd->RPort->FgPen;
-    saveBg = wnd->RPort->BgPen;
-    saveMd = wnd->RPort->DrawMode;
-    SetAPen(wnd->RPort, drawInfo->dri_Pens[BACKGROUNDPEN]);
-    RectFill(wnd->RPort, wnd->BorderLeft, wnd->BorderTop,
-             wnd->Width - wnd->BorderRight - 1,
-             wnd->Height - wnd->BorderBottom - 1);
-    SetAPen(wnd->RPort, saveFg);
-    SetBPen(wnd->RPort, saveBg);
-    SetDrMd(wnd->RPort, saveMd);
-    InstallLayerHook(wnd->WLayer, &dialogBackFillHook);
-}
 
 struct BookStruct
 {
@@ -298,23 +283,22 @@ static int OpenABookWindow( void )
     newWin.FirstGadget = aBookGList;
     newWin.Title = "DCTelnet: Address Book";
 
-    aBookWnd = OpenWindow(&newWin);
+    aBookWnd = OpenWindowTags(NULL,
+                WA_Left,        newWin.LeftEdge,
+                WA_Top,         newWin.TopEdge,
+                WA_Width,       newWin.Width,
+                WA_Height,      newWin.Height,
+                WA_DetailPen,   newWin.DetailPen,
+                WA_BlockPen,    newWin.BlockPen,
+                WA_IDCMP,       newWin.IDCMPFlags,
+                WA_Flags,       newWin.Flags,
+                WA_Gadgets,     newWin.FirstGadget,
+                WA_Title,       newWin.Title,
+                WA_CustomScreen, scr,
+                WA_BackFill,    &dialogBackFillHook,
+                TAG_DONE);
     if(!aBookWnd) return( 4L );
-    PaintDialogBackground(aBookWnd);
     DlgDump("abook", 6);
-
-/*    if ( ! ( aBookWnd = OpenWindowTags( NULL,
-                WA_Left,    (scr->Width - x) / 2,
-                WA_Top,        (scr->Height - y) / 2,
-                WA_Width,    x,
-                WA_Height,    y,
-                WA_IDCMP,    LISTVIEWIDCMP|BUTTONIDCMP|CYCLEIDCMP|IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|IDCMP_VANILLAKEY,
-                WA_Flags,    WFLG_DRAGBAR|WFLG_DEPTHGADGET|WFLG_CLOSEGADGET|WFLG_SMART_REFRESH|WFLG_ACTIVATE|WFLG_RMBTRAP,
-                WA_Gadgets,    aBookGList,
-                WA_Title,    "DCTelnet: Address Book",
-                WA_CustomScreen,scr,
-                TAG_DONE )))
-    return( 4L );*/
 
     GT_RefreshWindow( aBookWnd, NULL );
     /* Unconditional: GT_RefreshWindow is damage-driven and will not repaint
@@ -915,25 +899,24 @@ static int OpenEditProfileWindow( void )
     newWin.FirstGadget = editProfileGList;
     newWin.Title = "Edit Address Book Profile";
 
-    editProfileWnd = OpenWindow(&newWin);
+    editProfileWnd = OpenWindowTags(NULL,
+                WA_Left,        newWin.LeftEdge,
+                WA_Top,         newWin.TopEdge,
+                WA_Width,       newWin.Width,
+                WA_Height,      newWin.Height,
+                WA_DetailPen,   newWin.DetailPen,
+                WA_BlockPen,    newWin.BlockPen,
+                WA_IDCMP,       newWin.IDCMPFlags,
+                WA_Flags,       newWin.Flags,
+                WA_Gadgets,     newWin.FirstGadget,
+                WA_Title,       newWin.Title,
+                WA_CustomScreen, scr,
+                WA_BackFill,    &dialogBackFillHook,
+                TAG_DONE);
     if(!editProfileWnd) return( 4L );
-    /* DIAGNOSTIC 2026-09-25: base fill disabled here only -- do the field
-     * frames and buttons come back? (Address Book keeps its fill.) */
-    PaintDialogBackground(editProfileWnd);
     DlgDump("edit", editProfile_CNT);
 
-    /*if ( ! ( editProfileWnd = OpenWindowTags( NULL,
-                WA_Left,    (scr->Width - x) / 2,
-                WA_Top,        (scr->Height - y) / 2,
-                WA_Width,    x,
-                WA_Height,    y,
-                WA_IDCMP,    STRINGIDCMP|TEXTIDCMP|BUTTONIDCMP|IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|IDCMP_VANILLAKEY,
-                WA_Flags,    WFLG_DRAGBAR|WFLG_DEPTHGADGET|WFLG_CLOSEGADGET|WFLG_SMART_REFRESH|WFLG_ACTIVATE|WFLG_RMBTRAP,
-                WA_Gadgets,    editProfileGList,
-                WA_Title,    "Edit Address Book Profile",
-                WA_CustomScreen,    scr,
-                TAG_DONE )))
-    return( 4L );*/
+
 
     GT_RefreshWindow( editProfileWnd, NULL );
     RefreshGadgets( editProfileGList, editProfileWnd, NULL );
@@ -1667,10 +1650,10 @@ static int OpenFKeysWindow( void )
                 WA_Gadgets,    fKeysGList,
                 WA_Title,    "Function Keys",
                 WA_CustomScreen,scr,
+                WA_BackFill,    &dialogBackFillHook,
                 TAG_DONE )))
     return( 4L );
 
-    PaintDialogBackground(fKeysWnd);
     DlgDump("fkeys", 13);
     GT_RefreshWindow( fKeysWnd, NULL );
     RefreshGadgets( fKeysGList, fKeysWnd, NULL );
