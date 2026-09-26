@@ -740,7 +740,7 @@ add:
 
     if ( aBookWnd ) CloseWindow( aBookWnd );
 
-    if ( aBookGList ) FreeGadgets( aBookGList );
+    if ( aBookGList ) { FreeGadgets( aBookGList ); aBookGList = NULL; }
 
     // Initiate connection if requested
     if(ret)
@@ -1190,7 +1190,7 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
 
     // Close window and free gadgets
     if ( editProfileWnd ) CloseWindow( editProfileWnd );
-    if ( editProfileGList ) FreeGadgets( editProfileGList );
+    if ( editProfileGList ) { FreeGadgets( editProfileGList ); editProfileGList = NULL; }
 
     return ret;
 }

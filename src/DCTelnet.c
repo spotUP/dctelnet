@@ -14,10 +14,8 @@ const char __ver[] = "$VER: DCTelnet " DCTELNET_VERSION " " __AMIGADATE__;
 #define STR_(x) #x
 #define STR(x) STR_(x)
 
-/* The short git hash rides in every title bar, so screenshots always
- * identify the exact build under test. */
 static char MainWindowTitle[] =
-  "DCTelnet " DCTELNET_VERSION " " __AMIGADATE__ " [" STR(BUILD_HASH) "] - A classic Amiga Telnet/BBS client";
+  "DCTelnet " DCTELNET_VERSION " " __AMIGADATE__ " - A classic Amiga Telnet/BBS client";
 
 #define __USE_SYSBASE
 
