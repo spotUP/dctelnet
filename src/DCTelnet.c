@@ -93,6 +93,7 @@ static struct NewMenu mainMenuDesc[] =
     {    NM_ITEM, "Scroll Back",                    "X",             0,               0, (APTR)MENU_SCROLLBACK},
     {    NM_ITEM, "Iconify",                        "&",             0,               0, (APTR)MENU_ICONIFY},
     {    NM_ITEM, "Display Speed Test",             "Y",             0,               0, (APTR)MENU_DISPLAY_SPEED_TEST},
+    {    NM_ITEM, "Dump Pens",                        0,             0,               0, (APTR)MENU_DUMP_PENS},
     {    NM_ITEM, "Finger",                         "@",             0,               0, (APTR)MENU_FINGER},
     {    NM_ITEM, NM_BARLABEL,                       0 ,             0,               0, (APTR)MENU_BAR1},
     {    NM_ITEM, "Reset Screen",                   "C",             0,               0, (APTR)MENU_RESET_SCREEN},
@@ -162,6 +163,7 @@ static struct NewMenu mainMenuDesc[] =
 #endif
 
 static void GetWindowMsg(struct Window *wwin);
+static void DumpPens(void);
 static void ResetTelnetContext(void);
 static void ResetZmodemContext(void);
 static void SetLocalEchoBack(BOOL wantedState);
@@ -216,6 +218,8 @@ struct PrefsStruct globalPrefs;
 
 /* WB terminal SGR map state (see BuildWbPenMap below). */
 static UBYTE wbPenMap[16];
+static char conDevName[32];
+static ULONG conUnitNum = 0;
 static BOOL wbMapActive = FALSE;
 static UBYTE wbScratch[8192];
 ULONG sessionSettingsId = 0;    /* 0 = no entry settings active */
@@ -2492,6 +2496,11 @@ static void GetWindowMsg(struct Window *wwin)
                         SpeedTest();
                         break;
 
+                    case MENU_DUMP_PENS:
+                        DumpPens();
+                        SimpleReq("Pens.txt written.");
+                        break;
+
                     case MENU_FINGER:
                         WindowSub(Finger);
                         break;
@@ -3613,6 +3622,14 @@ static void DumpPens(void)
         PendStr(&p, "\r\n");
     }
 
+    PendStr(&p, "console=");
+    PendStr(&p, conDevName[0] ? conDevName : "-");
+    PendStr(&p, " unit=");
+    PendDec(&p, conUnitNum);
+    PendStr(&p, " opened=");
+    PendDec(&p, (ULONG)(isConDeviceOpened ? 1 : 0));
+    PendStr(&p, "\r\n");
+
     fh = Open("PROGDIR:Pens.txt", MODE_NEWFILE);
     if (fh)
     {
@@ -3740,6 +3757,8 @@ BOOL OpenDisplay(void)
         if(b == RETURN_OK)
         {
             isConDeviceOpened = TRUE;
+            strlcpy(conDevName, devName, sizeof(conDevName));
+            conUnitNum = (ULONG)unitNumber;
             BuildWbPenMap();
         }
         else
