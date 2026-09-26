@@ -788,7 +788,7 @@ add:
 
 static struct Window         *editProfileWnd;           // "Edit Address Book Profile" window
 static struct Gadget         *editProfileGList;         // "Edit Address Book Profile" window GList
-static struct Gadget         *editProfileGadgets[19];   // "Edit Address Book Profile" window gadgets
+static struct Gadget         *editProfileGadgets[20];   // "Edit Address Book Profile" window gadgets
 #define editProfileWidth 450
 #define editProfileHeight 173
 
@@ -807,11 +807,12 @@ static UBYTE editProfileGTypes[] = {
     CHECKBOX_KIND,
     TEXT_KIND,
     BUTTON_KIND,
-    CYCLE_KIND,
+    BUTTON_KIND,
     CHECKBOX_KIND,
     CHECKBOX_KIND,
     CHECKBOX_KIND,
-    CHECKBOX_KIND
+    CHECKBOX_KIND,
+    TEXT_KIND
 };
 
 static struct MyNewGadget editProfileNGad[] = {
@@ -829,99 +830,13 @@ static struct MyNewGadget editProfileNGad[] = {
     3, 98, 175, 13, (UBYTE *)"PETSCII _Mode",
     292, 98, 145, 13, (UBYTE *)"",
     185, 98, 100, 13, (UBYTE *)"_Font...",
-    120, 113, 317, 13, (UBYTE *)"Screen Mode:",
+    3, 113, 150, 13, (UBYTE *)"Screen Mode...",
     3, 128, 100, 13, (UBYTE *)"_Echo",
     108, 128, 100, 13, (UBYTE *)"_Raw",
     213, 128, 110, 13, (UBYTE *)"_BS/DEL",
     328, 128, 109, 13, (UBYTE *)"CR+_LF",
+    160, 113, 277, 13, (UBYTE *)"",
 };
-
-/* Screen-mode cycle content: enumerated from the DisplayInfo database
- * at dialog open (planar modes, width>=320, depth within ScreenMaxDepth).
- * Staged DisplayID picks the active slot. */
-#define MAX_SCREEN_MODES 64
-
-static ULONG screenModeIds[MAX_SCREEN_MODES];
-static UWORD screenModeW[MAX_SCREEN_MODES];
-static UWORD screenModeH[MAX_SCREEN_MODES];
-static UWORD screenModeD[MAX_SCREEN_MODES];
-static char screenModeNames[MAX_SCREEN_MODES][20];
-static ULONG screenCycleLabels[MAX_SCREEN_MODES + 1];
-static UWORD screenModeCount = 0;
-
-static void CollectScreenModes(void)
-{
-    ULONG id = 0xFFFFFFFFUL;  /* INVALID_ID, spelled out: the macro is -1 */
-    DisplayInfoHandle handle;
-    struct DisplayInfo dinfo;
-    struct DimensionInfo dims;
-    UWORD maxDepth, d, i, n;
-    ULONG w, h;
-
-    screenModeCount = 0;
-    screenCycleLabels[0] = (ULONG)NULL;
-
-    while ((id = NextDisplayInfo(id)) != INVALID_ID)
-    {
-        handle = FindDisplayInfo(id);
-        if (handle == NULL)
-            continue;
-        if (!GetDisplayInfoData(handle, (UBYTE *)&dinfo, sizeof(dinfo), DTAG_DISP, 0))
-            continue;
-        if (dinfo.NotAvailable)
-            continue;
-        if (dinfo.PropertyFlags & (DIPF_IS_HAM | DIPF_IS_EXTRAHALFBRITE | DIPF_IS_DUALPF))
-            continue;
-        if (!GetDisplayInfoData(handle, (UBYTE *)&dims, sizeof(dims), DTAG_DIMS, 0))
-            continue;
-        w = (ULONG)(dims.Nominal.MaxX - dims.Nominal.MinX + 1);
-        h = (ULONG)(dims.Nominal.MaxY - dims.Nominal.MinY + 1);
-        if (w < 320)
-            continue;
-        maxDepth = dims.MaxDepth;
-        if (maxDepth > ScreenMaxDepth())
-            maxDepth = ScreenMaxDepth();
-        for (d = 1; d <= maxDepth; d++)
-        {
-            /* Dedupe identical geometry (PAL/NTSC twins): first wins. */
-            for (n = 0; n < screenModeCount; n++)
-            {
-                if (screenModeW[n] == w && screenModeH[n] == h && screenModeD[n] == d)
-                    break;
-            }
-            if (n != screenModeCount)
-                continue;
-            if (screenModeCount >= MAX_SCREEN_MODES)
-                return;
-            n = screenModeCount++;
-            screenModeIds[n] = dinfo.Header.DisplayID;
-            screenModeW[n] = (UWORD)w;
-            screenModeH[n] = (UWORD)h;
-            screenModeD[n] = d;
-            mysprintf(screenModeNames[n], "%lux%lux%lu", w, h, (ULONG)d);
-            screenCycleLabels[n] = (ULONG)screenModeNames[n];
-            screenCycleLabels[n + 1] = (ULONG)NULL;
-        }
-    }
-}
-
-/* Slot matching the staged mode (exact id, else geometry, else first). */
-static UWORD ScreenModeSlot(ULONG id, UWORD w, UWORD h, UWORD d)
-{
-    UWORD i;
-
-    for (i = 0; i < screenModeCount; i++)
-    {
-        if (screenModeIds[i] == id)
-            return i;
-    }
-    for (i = 0; i < screenModeCount; i++)
-    {
-        if (screenModeW[i] == w && screenModeH[i] == h && screenModeD[i] == d)
-            return i;
-    }
-    return 0;
-}
 
 static ULONG editProfileGTags[] = {
     GTST_String, 0, (GTST_MaxChars), 31, (GT_Underscore), '_', (GTST_EditHook), (ULONG)&selectAllHook, (TAG_DONE),
@@ -938,11 +853,12 @@ static ULONG editProfileGTags[] = {
     (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
     GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE),
     (GT_Underscore), '_', (TAG_DONE),
-    (GTCY_Labels), (ULONG)&screenCycleLabels[0], (GTCY_Active), 0, (TAG_DONE),
+    (GT_Underscore), '_', (TAG_DONE),
     (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
     (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
     (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
-    (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE)
+    (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
+    GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE)
 };
 
 /* Initial-value slots in editProfileGTags (must match the table above;
@@ -956,11 +872,11 @@ static ULONG editProfileGTags[] = {
 #define ETAG_SETTINGS 57
 #define ETAG_PETSCII 70
 #define ETAG_FONTNAME 73
-#define ETAG_SCREEN_ACTIVE 83
-#define ETAG_ECHO 88
-#define ETAG_RAW 93
-#define ETAG_BSDEL 98
-#define ETAG_CRLF 103
+#define ETAG_ECHO 86
+#define ETAG_RAW 91
+#define ETAG_BSDEL 96
+#define ETAG_CRLF 101
+#define ETAG_SCREENTEXT 104
 
 // Draw the Edit Address Book Profile window
 static int OpenEditProfileWindow( void )
@@ -1072,13 +988,14 @@ static void EditSettingsRefresh(const struct PrefsStruct *staged,
 /* Push the staged PETSCII/font/screen/toggles into the live gadgets
  * (window must be open). */
 static void EditStagedRefresh(struct PrefsStruct *staged,
-                              char *labelBuf, size_t labelLen, ULONG settingsId)
+                              char *labelBuf, size_t labelLen, ULONG settingsId,
+                              char *screenBuf)
 {
-    GT_SetGadgetAttrs(editProfileGadgets[GD_SCREEN_CYCLE], editProfileWnd, 0,
-                      GTCY_Active,
-                      ScreenModeSlot(staged->DisplayID, staged->DisplayWidth,
-                                     staged->DisplayHeight, staged->DisplayDepth),
-                      TAG_DONE);
+    mysprintf(screenBuf, "%lux%lux%lu", (ULONG)staged->DisplayWidth,
+              (ULONG)staged->DisplayHeight, (ULONG)staged->DisplayDepth);
+    EditEraseTextGadget(GD_SCREEN_TEXT);
+    GT_SetGadgetAttrs(editProfileGadgets[GD_SCREEN_TEXT], editProfileWnd, 0,
+                      GTTX_Text, screenBuf, TAG_DONE);
     GT_SetGadgetAttrs(editProfileGadgets[GD_PETSCII], editProfileWnd, 0,
                       GTCB_Checked, (staged->flags & FLAG_PETSCII_MODE) ? TRUE : FALSE,
                       TAG_DONE);
@@ -1104,7 +1021,8 @@ static void EditStagedRefresh(struct PrefsStruct *staged,
  * staged copy, which the checkbox/font/screen buttons may then adjust. */
 static void EditUseCurrentSettings(struct List *bookList, ULONG *newSettingsId,
                                    struct PrefsStruct *staged,
-                                   char *labelBuf, size_t labelLen)
+                                   char *labelBuf, size_t labelLen,
+                                   char *screenBuf)
 {
     if (*newSettingsId == 0)
     {
@@ -1116,17 +1034,18 @@ static void EditUseCurrentSettings(struct List *bookList, ULONG *newSettingsId,
         }
     }
     *staged = prefs;
-    EditStagedRefresh(staged, labelBuf, labelLen, *newSettingsId);
+    EditStagedRefresh(staged, labelBuf, labelLen, *newSettingsId, screenBuf);
 }
 
 /* "Use Global Settings": drop the entry's settings on OK (file deleted). */
 static void EditUseGlobalSettings(ULONG *newSettingsId,
                                   struct PrefsStruct *staged,
-                                  char *labelBuf, size_t labelLen)
+                                  char *labelBuf, size_t labelLen,
+                                  char *screenBuf)
 {
     *newSettingsId = 0;
     *staged = globalPrefs;
-    EditStagedRefresh(staged, labelBuf, labelLen, 0);
+    EditStagedRefresh(staged, labelBuf, labelLen, 0, screenBuf);
 }
 
 /* Staged flag checkbox (button or key): toggle and force the gadget to
@@ -1145,6 +1064,25 @@ static void EditToggleFlag(struct PrefsStruct *staged, ULONG flag, UWORD gadgetI
 }
 
 /* Screen button: pick straight into the staged copy. */
+/* Screen button: the proper ASL mode requester, straight into staged. */
+static void EditPickScreen(struct PrefsStruct *staged, char *screenBuf)
+{
+    ULONG id = staged->DisplayID;
+    UWORD w = staged->DisplayWidth, h = staged->DisplayHeight, d = staged->DisplayDepth;
+
+    if (ScreenModeRequester(editProfileWnd, &id, &w, &h, &d, ScreenMaxDepth()))
+    {
+        staged->DisplayID = id;
+        staged->DisplayWidth = w;
+        staged->DisplayHeight = h;
+        staged->DisplayDepth = d;
+        mysprintf(screenBuf, "%lux%lux%lu", (ULONG)w, (ULONG)h, (ULONG)d);
+        EditEraseTextGadget(GD_SCREEN_TEXT);
+        GT_SetGadgetAttrs(editProfileGadgets[GD_SCREEN_TEXT], editProfileWnd, 0,
+                          GTTX_Text, screenBuf, TAG_DONE);
+    }
+}
+
 /* PETSCII checkbox (button or 'M' key) is handled by EditToggleFlag. */
 
 /* Font button (or 'F' key): pick straight into the staged copy. */
@@ -1172,6 +1110,7 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
 {
     char strLastTime[2 * LEN_DATSTRING];
     char strSettings[24];
+    char strScreen[32];
     ULONG newSettingsId;
     struct PrefsStruct stagedSettings;
     struct IntuiMessage *message;
@@ -1199,10 +1138,9 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
     editProfileGTags[ETAG_PASSWORD] = (unsigned long)book->password;
     EditSettingsSummary(&stagedSettings, newSettingsId, strSettings, sizeof(strSettings));
     editProfileGTags[ETAG_SETTINGS] = (unsigned long)strSettings;
-    CollectScreenModes();
-    editProfileGTags[ETAG_SCREEN_ACTIVE] =
-        ScreenModeSlot(stagedSettings.DisplayID, stagedSettings.DisplayWidth,
-                       stagedSettings.DisplayHeight, stagedSettings.DisplayDepth);
+    mysprintf(strScreen, "%lux%lux%lu", (ULONG)stagedSettings.DisplayWidth,
+              (ULONG)stagedSettings.DisplayHeight, (ULONG)stagedSettings.DisplayDepth);
+    editProfileGTags[ETAG_SCREENTEXT] = (unsigned long)strScreen;
     editProfileGTags[ETAG_PETSCII] =
         (stagedSettings.flags & FLAG_PETSCII_MODE) ? TRUE : FALSE;
     editProfileGTags[ETAG_FONTNAME] = (unsigned long)stagedSettings.fontname;
@@ -1262,11 +1200,13 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
                         case 'W':  vgad = editProfileGadgets[GD_PASSWORD];    break;
                         case 'T':  EditUseCurrentSettings(bookList, &newSettingsId,
                                                           &stagedSettings,
-                                                          strSettings, sizeof(strSettings));
+                                                          strSettings, sizeof(strSettings),
+                                                          strScreen);
                                    break;
                         case 'G':  EditUseGlobalSettings(&newSettingsId,
                                                          &stagedSettings,
-                                                         strSettings, sizeof(strSettings));
+                                                         strSettings, sizeof(strSettings),
+                                                         strScreen);
                                    break;
                         case 'M':  EditToggleFlag(&stagedSettings, FLAG_PETSCII_MODE,
                                                   GD_PETSCII,
@@ -1313,12 +1253,14 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
                     case GD_USE_CURRENT:
                         EditUseCurrentSettings(bookList, &newSettingsId,
                                                &stagedSettings,
-                                               strSettings, sizeof(strSettings));
+                                               strSettings, sizeof(strSettings),
+                                               strScreen);
                         break;
                     case GD_USE_GLOBAL:
                         EditUseGlobalSettings(&newSettingsId,
                                               &stagedSettings,
-                                              strSettings, sizeof(strSettings));
+                                              strSettings, sizeof(strSettings),
+                                              strScreen);
                         break;
                     case GD_PETSCII:
                         EditToggleFlag(&stagedSettings, FLAG_PETSCII_MODE,
@@ -1329,14 +1271,8 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
                     case GD_FONT_BUTTON:
                         EditPickFont(&stagedSettings);
                         break;
-                    case GD_SCREEN_CYCLE:
-                        if (code < screenModeCount)
-                        {
-                            stagedSettings.DisplayID = screenModeIds[code];
-                            stagedSettings.DisplayWidth = screenModeW[code];
-                            stagedSettings.DisplayHeight = screenModeH[code];
-                            stagedSettings.DisplayDepth = screenModeD[code];
-                        }
+                    case GD_SCREEN_BUTTON:
+                        EditPickScreen(&stagedSettings, strScreen);
                         break;
                     case GD_ECHO:
                         EditToggleFlag(&stagedSettings, FLAG_LOCAL_ECHO,

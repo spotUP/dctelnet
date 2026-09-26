@@ -16,11 +16,11 @@
 #define GD_FONT_TEXT                           12
 #define GD_FONT_BUTTON                         13
 #define GD_SCREEN_BUTTON                       14
-#define GD_SCREEN_TEXT                         15
-#define GD_ECHO                                16
-#define GD_RAW                                 17
-#define GD_BSDEL                               18
-#define GD_CRLF                                19
+#define GD_ECHO                                15
+#define GD_RAW                                 16
+#define GD_BSDEL                               17
+#define GD_CRLF                                18
+#define GD_SCREEN_TEXT                         19
 
 #define GDX_SITE                               0
 #define GDX_ADDRESS                            1

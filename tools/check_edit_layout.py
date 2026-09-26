@@ -26,9 +26,9 @@ EXPECTED_KIND = {
     3: "BUTTON_KIND", 4: "BUTTON_KIND", 5: "INTEGER_KIND",
     6: "STRING_KIND", 7: "STRING_KIND", 8: "TEXT_KIND",
     9: "BUTTON_KIND", 10: "BUTTON_KIND", 11: "CHECKBOX_KIND",
-    12: "TEXT_KIND", 13: "BUTTON_KIND", 14: "CYCLE_KIND",
+    12: "TEXT_KIND", 13: "BUTTON_KIND", 14: "BUTTON_KIND",
     15: "CHECKBOX_KIND", 16: "CHECKBOX_KIND", 17: "CHECKBOX_KIND",
-    18: "CHECKBOX_KIND",
+    18: "CHECKBOX_KIND", 19: "TEXT_KIND",
 }
 
 
@@ -90,9 +90,9 @@ def main(guis_path, edit_path):
         "ETAG_SITE": (0, 1), "ETAG_ADDRESS": (1, 1), "ETAG_LAST": (2, 1),
         "ETAG_PORT": (5, 1), "ETAG_USERNAME": (6, 1), "ETAG_PASSWORD": (7, 1),
         "ETAG_SETTINGS": (8, 1), "ETAG_PETSCII": (11, 3),
-        "ETAG_FONTNAME": (12, 1), "ETAG_SCREEN_ACTIVE": (14, 3),
-        "ETAG_ECHO": (15, 3), "ETAG_RAW": (16, 3),
-        "ETAG_BSDEL": (17, 3), "ETAG_CRLF": (18, 3),
+        "ETAG_FONTNAME": (12, 1), "ETAG_ECHO": (15, 3),
+        "ETAG_RAW": (16, 3), "ETAG_BSDEL": (17, 3), "ETAG_CRLF": (18, 3),
+        "ETAG_SCREENTEXT": (19, 1),
     }
     base = 0
     block_base = []
