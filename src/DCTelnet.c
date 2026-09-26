@@ -287,10 +287,98 @@ BYTE dontUseSig31 = -1; // don't use it, ibmcon.device will destroy it.
 #include "DCTelnet-debug.h"
 
 
+
+/* TEMPORARY DIAGNOSTIC: log the first SGR sequences ConWrite sees, so a
+ * white-screen report can tell "SGR never arrives" from "device ignores".
+ * Writes PROGDIR:Sgr.txt once (capped), human-readable hex. */
+static UBYTE sgrSeen[512];
+static size_t sgrSeenLen = 0;
+static BOOL sgrSaved = FALSE;
+static int sgrSeqs = 0;
+
+static void SgrTraceByte(UBYTE b)
+{
+    if (sgrSaved || sgrSeenLen + 4 > sizeof(sgrSeen))
+        return;
+    sgrSeen[sgrSeenLen++] = b;
+}
+
+static void SgrTraceFlush(void)
+{
+    BPTR fh;
+    size_t i;
+    static char hexd[] = "0123456789ABCDEF";
+    static char out[2048];
+    size_t o = 0;
+
+    if (sgrSaved)
+        return;
+    sgrSaved = TRUE;
+    for (i = 0; i < sgrSeenLen && o + 3 < sizeof(out); i++)
+    {
+        out[o++] = hexd[(sgrSeen[i] >> 4) & 0xF];
+        out[o++] = hexd[sgrSeen[i] & 0xF];
+        out[o++] = ' ';
+    }
+    fh = Open("PROGDIR:Sgr.txt", MODE_NEWFILE);
+    if (fh)
+    {
+        Write(fh, out, (LONG)o);
+        Close(fh);
+    }
+}
+
+/* Feed every byte of a ConWrite through the SGR sniffer: records ESC [ ...
+ * m and 9B ... m runs (capped at 512 bytes total, then stops). */
+static void SgrSniff(const char *data, long len)
+{
+    static int inSeq = 0;
+    long i;
+
+    if (sgrSaved)
+        return;
+    for (i = 0; i < len; i++)
+    {
+        UBYTE b = (UBYTE)data[i];
+        if (!inSeq)
+        {
+            if (b == 0x1B)
+            {
+                inSeq = 1;
+                SgrTraceByte(b);
+            }
+            else if (b == 0x9B)
+            {
+                inSeq = 2;
+                SgrTraceByte(b);
+            }
+        }
+        else if (inSeq == 1)
+        {
+            SgrTraceByte(b);
+            if (b == '[')
+                inSeq = 2;
+            else
+                inSeq = 0;
+        }
+        else
+        {
+            SgrTraceByte(b);
+            if ((b >= 0x40 && b <= 0x7E) || sgrSeenLen + 4 > sizeof(sgrSeen))
+            {
+                inSeq = 0;
+                if (++sgrSeqs >= 12 || sgrSeenLen + 4 > sizeof(sgrSeen))
+                    SgrTraceFlush();
+            }
+        }
+    }
+}
+
 static void ConWrite(char *data, long len)
 {
     if(!isAppIconified)
     {
+        SgrSniff(data, len);
         if(drivertype)
             XemWrite(data, len);
         else {
