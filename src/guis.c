@@ -934,11 +934,28 @@ static void EditSettingsSummary(const struct PrefsStruct *staged,
     }
 }
 
+/* Erase a TEXT gadget's box: redisplay draws transparently, so a shorter
+ * value would ghost over a longer previous one. */
+static void EditEraseTextGadget(UWORD gadgetID)
+{
+    struct Gadget *gad = editProfileGadgets[gadgetID];
+    ULONG saveFg = editProfileWnd->RPort->FgPen;
+
+    if (UsePrivateUiPens() && drawInfo != NULL)
+        SetAPen(editProfileWnd->RPort, drawInfo->dri_Pens[BACKGROUNDPEN]);
+    else
+        SetAPen(editProfileWnd->RPort, 0);
+    RectFill(editProfileWnd->RPort, gad->LeftEdge, gad->TopEdge,
+             gad->LeftEdge + gad->Width - 1, gad->TopEdge + gad->Height - 1);
+    SetAPen(editProfileWnd->RPort, saveFg);
+}
+
 /* Same, pushed into the live label (window must be open). */
 static void EditSettingsRefresh(const struct PrefsStruct *staged,
                                 char *labelBuf, size_t labelLen, ULONG settingsId)
 {
     EditSettingsSummary(staged, settingsId, labelBuf, labelLen);
+    EditEraseTextGadget(GD_SETTINGS_LABEL);
     GT_SetGadgetAttrs(editProfileGadgets[GD_SETTINGS_LABEL], editProfileWnd, 0,
                       GTTX_Text, labelBuf, TAG_DONE);
 }
@@ -1007,6 +1024,7 @@ static void EditPickFont(struct PrefsStruct *staged)
                       staged->fontname, sizeof(staged->fontname),
                       &staged->fontsize))
     {
+        EditEraseTextGadget(GD_FONT_TEXT);
         GT_SetGadgetAttrs(editProfileGadgets[GD_FONT_TEXT], editProfileWnd, 0,
                           GTTX_Text, staged->fontname, TAG_DONE);
     }
