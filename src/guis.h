@@ -7,6 +7,9 @@
  * No-op anywhere else. Call after OpenWindow, before GT_RefreshWindow. */
 void PaintDialogBackground(struct Window *wnd);
 
+/* TEMPORARY DIAGNOSTIC: state snapshot at dialog open (PROGDIR:Dlg.txt). */
+void DlgDump(const char *which, int ngadgets);
+
 // Types
 struct MyNewGadget
 {
