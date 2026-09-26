@@ -824,6 +824,8 @@ static struct MyNewGadget editProfileNGad[] = {
     120, 53, 317, 13, (UBYTE *)"_Username:",
     120, 68, 317, 13, (UBYTE *)"Pass_word:",
     120, 83, 177, 13, (UBYTE *)"Settings:",
+    3, 143, 180, 13, (UBYTE *)"Use Curren_t Settings",
+    267, 143, 180, 13, (UBYTE *)"Use _Global Settings",
     3, 98, 175, 13, (UBYTE *)"PETSCII _Mode",
     292, 98, 145, 13, (UBYTE *)"",
     185, 98, 100, 13, (UBYTE *)"_Font...",
@@ -832,8 +834,6 @@ static struct MyNewGadget editProfileNGad[] = {
     108, 128, 100, 13, (UBYTE *)"_Raw",
     213, 128, 110, 13, (UBYTE *)"_BS/DEL",
     328, 128, 109, 13, (UBYTE *)"CR+_LF",
-    3, 143, 180, 13, (UBYTE *)"Use Curren_t Settings",
-    267, 143, 180, 13, (UBYTE *)"Use _Global Settings",
 };
 
 /* Screen-mode cycle content: enumerated from the DisplayInfo database
@@ -954,13 +954,13 @@ static ULONG editProfileGTags[] = {
 #define ETAG_USERNAME 39
 #define ETAG_PASSWORD 48
 #define ETAG_SETTINGS 57
-#define ETAG_PETSCII 69
+#define ETAG_PETSCII 70
 #define ETAG_FONTNAME 73
-#define ETAG_SCREEN_ACTIVE 82
-#define ETAG_ECHO 87
-#define ETAG_RAW 92
-#define ETAG_BSDEL 97
-#define ETAG_CRLF 102
+#define ETAG_SCREEN_ACTIVE 83
+#define ETAG_ECHO 88
+#define ETAG_RAW 93
+#define ETAG_BSDEL 98
+#define ETAG_CRLF 103
 
 // Draw the Edit Address Book Profile window
 static int OpenEditProfileWindow( void )

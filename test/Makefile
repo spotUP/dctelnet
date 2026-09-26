@@ -5,9 +5,15 @@ CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 
 TESTS := test_petscii_modules test_petscii_dispatch test_site_prefs test_petscii_local test_sgr_remap
 
-.PHONY: all clean check-encoding check-fonts
-all: $(TESTS) check-encoding check-fonts
+.PHONY: all clean check-encoding check-fonts check-layout
+all: $(TESTS) check-encoding check-fonts check-layout
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
+
+# The Edit Address Book Profile window is built from four parallel tables
+# (NGad/GTypes/tags/GD_*+ETAG_*) that must agree element-by-element; poking
+# a tag instead of its value corrupts every downstream gadget.
+check-layout:
+	python3 ../tools/check_edit_layout.py ../src/guis.c ../src/edit.h
 
 # DCTelnet's own sources carry legacy 8-bit bytes (Amiga CSI 0x9B, Latin-1
 # accents) inside live strings. A UTF-8-only editor rewrites them as U+FFFD
