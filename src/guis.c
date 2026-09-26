@@ -81,11 +81,22 @@ static ULONG DialogBackFillFunc(HOOK_A0 struct Hook *hook,
 {
     struct RastPort *rp = (struct RastPort *)object;
     struct Rectangle *bounds = (struct Rectangle *)((UBYTE *)message + sizeof(APTR));
+    ULONG saveFg;
+    ULONG saveBg;
+    UBYTE saveMd;
 
     if (UsePrivateUiPens() && drawInfo != NULL)
     {
+        /* Save/restore: GadTools renders after us inherit RPort pens, and
+         * a leftover gray FgPen camouflages every default-pen element. */
+        saveFg = rp->FgPen;
+        saveBg = rp->BgPen;
+        saveMd = rp->DrawMode;
         SetAPen(rp, drawInfo->dri_Pens[BACKGROUNDPEN]);
         RectFill(rp, bounds->MinX, bounds->MinY, bounds->MaxX, bounds->MaxY);
+        SetAPen(rp, saveFg);
+        SetBPen(rp, saveBg);
+        SetDrMd(rp, saveMd);
     }
     return 0;
 }
@@ -95,13 +106,24 @@ static struct Hook dialogBackFillHook =
 
 void PaintDialogBackground(struct Window *wnd)
 {
+    ULONG saveFg;
+    ULONG saveBg;
+    UBYTE saveMd;
+
     if (wnd == NULL || wnd->WLayer == NULL || !UsePrivateUiPens() || drawInfo == NULL)
         return;
-    /* Initial base now (the hook below only fires on future damage). */
+    /* Initial base now (the hook below only fires on future damage).
+     * Save/restore RPort pens (see DialogBackFillFunc). */
+    saveFg = wnd->RPort->FgPen;
+    saveBg = wnd->RPort->BgPen;
+    saveMd = wnd->RPort->DrawMode;
     SetAPen(wnd->RPort, drawInfo->dri_Pens[BACKGROUNDPEN]);
     RectFill(wnd->RPort, wnd->BorderLeft, wnd->BorderTop,
              wnd->Width - wnd->BorderRight - 1,
              wnd->Height - wnd->BorderBottom - 1);
+    SetAPen(wnd->RPort, saveFg);
+    SetBPen(wnd->RPort, saveBg);
+    SetDrMd(wnd->RPort, saveMd);
     InstallLayerHook(wnd->WLayer, &dialogBackFillHook);
 }
 
