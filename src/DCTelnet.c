@@ -3441,6 +3441,98 @@ void CreateAppMenus(void)
  *
  * @return TRUE on success, FALSE if the display could not be opened.
  */
+
+/* TEMPORARY DIAGNOSTIC (pending owner screenshots): ground truth about the
+ * opened screen -- actual bitmap depth (vs requested), palette content,
+ * dri_Pens mapping, VisualInfo state. Written to PROGDIR:Pens.txt on every
+ * OpenDisplay; the owner copies it back from the shared folder. */
+static char pendumpBuf[4096];
+
+static void PendHex(char **p, ULONG v)
+{
+    int n;
+    for (n = 7; n >= 0; n--)
+    {
+        UBYTE nib = (UBYTE)((v >> (n * 4)) & 0xF);
+        *(*p)++ = (char)(nib < 10 ? '0' + nib : 'A' + nib - 10);
+    }
+}
+
+static void PendStr(char **p, const char *s)
+{
+    while (*s)
+        *(*p)++ = *s++;
+}
+
+static void PendDec(char **p, ULONG v)
+{
+    char tmp[12];
+    int len = 0, i;
+    if (v == 0)
+        tmp[len++] = '0';
+    while (v > 0 && len < 11)
+    {
+        tmp[len++] = (char)('0' + v % 10);
+        v /= 10;
+    }
+    for (i = len - 1; i >= 0; i--)
+        *(*p)++ = tmp[i];
+}
+
+static void DumpPens(void)
+{
+    char *p = pendumpBuf;
+    BPTR fh;
+    ULONG trip[3];
+    int i;
+
+    PendStr(&p, "build ");
+    PendStr(&p, STR(BUILD_HASH));
+    PendStr(&p, " depth=");
+    PendDec(&p, (ULONG)(scr ? scr->BitMap.Depth : 999));
+    PendStr(&p, " reqDepth=");
+    PendDec(&p, (ULONG)prefs.DisplayDepth);
+    PendStr(&p, " DisplayID=0x");
+    PendHex(&p, prefs.DisplayID);
+    PendStr(&p, " Gfx=");
+    PendDec(&p, (ULONG)(GfxBase ? GfxBase->LibNode.lib_Version : 0));
+    PendStr(&p, " vi=");
+    PendHex(&p, (ULONG)visualInfos);
+    PendStr(&p, " di=");
+    PendHex(&p, (ULONG)drawInfo);
+    PendStr(&p, "\r\n");
+
+    if (drawInfo != NULL)
+    {
+        PendStr(&p, "driPens:");
+        for (i = 0; i < 12; i++)
+        {
+            PendStr(&p, " ");
+            PendDec(&p, (ULONG)drawInfo->dri_Pens[i]);
+        }
+        PendStr(&p, "\r\n");
+    }
+
+    if (scr != NULL && GfxBase != NULL && GfxBase->LibNode.lib_Version >= 39)
+    {
+        PendStr(&p, "pens:");
+        for (i = 0; i < 32; i++)
+        {
+            GetRGB32(scr->ViewPort.ColorMap, (ULONG)i, 1, trip);
+            PendStr(&p, " ");
+            PendHex(&p, SitePrefs_TripletToXRGB(trip[0], trip[1], trip[2]));
+        }
+        PendStr(&p, "\r\n");
+    }
+
+    fh = Open("PROGDIR:Pens.txt", MODE_NEWFILE);
+    if (fh)
+    {
+        Write(fh, pendumpBuf, (LONG)(p - pendumpBuf));
+        Close(fh);
+    }
+}
+
 BOOL OpenDisplay(void)
 {
     #ifdef _DEBUG
@@ -3468,6 +3560,7 @@ BOOL OpenDisplay(void)
 
     OpenAppWindow();
     if(win == NULL) { InfoReq(NULL,"Unable to open main window!"); goto clean_and_return; }
+    DumpPens();
 
     CreateAppMenus();
     if (mainMenuStrip == NULL) { InfoReq(isRunningOnWB ? NULL : win, "Unable to create menus!");
