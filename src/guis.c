@@ -1078,7 +1078,7 @@ static void EditPickScreen(struct PrefsStruct *staged, char *screenBuf)
     ULONG id = staged->DisplayID;
     UWORD w = staged->DisplayWidth, h = staged->DisplayHeight, d = staged->DisplayDepth;
 
-    if (ScreenModeRequester(NULL, &id, &w, &h, &d, ScreenMaxDepth()))
+    if (ScreenModeRequester(editProfileWnd, &id, &w, &h, &d, ScreenMaxDepth()))
     {
         staged->DisplayID = id;
         staged->DisplayWidth = w;

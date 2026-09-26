@@ -857,11 +857,7 @@ static BOOL ChooseScreen(char firsttime)
 
     if (AslBase && AslBase->lib_Version >= 38) // ASL screen mode requester introduced with AmigaOS 2.1
     {
-        /* Parent NULL opens on Workbench: the ASL depth cycle renders
-         * black-on-black on black-based custom screens (its text follows
-         * TEXTPEN while its base stays pen 0); on WB it is proven. The
-         * selected values apply to our screen regardless. */
-        result = ScreenModeRequester(NULL, &prefs.DisplayID,
+        result = ScreenModeRequester(isRunningOnWB ? NULL : win, &prefs.DisplayID,
                                     &prefs.DisplayWidth, &prefs.DisplayHeight, &prefs.DisplayDepth,
                                     ScreenMaxDepth());
     }
