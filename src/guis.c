@@ -29,49 +29,6 @@
 #include "utils.h"
 #include "site_prefs.h"
 
-/* TEMPORARY DIAGNOSTIC: state snapshot at dialog open (PROGDIR:Dlg.txt).
- * Answers whether broken dialogs see a stale screen/pens/VisualInfo:
- * "name entryid wb depth private vi di ngadgets". */
-void DlgDump(const char *which, int ngadgets)
-{
-    static char buf[128];
-    char *p = buf;
-    BPTR fh;
-    ULONG v;
-    int n;
-
-    while (*which)
-        *p++ = *which++;
-    *p++ = ' ';
-    v = (ULONG)sessionSettingsId;
-    for (n = 7; n >= 0; n--)
-    {
-        UBYTE nib = (UBYTE)((v >> (n * 4)) & 0xF);
-        *p++ = (char)(nib < 10 ? '0' + nib : 'A' + nib - 10);
-    }
-    *p++ = ' ';
-    *p++ = (char)('0' + (isRunningOnWB ? 1 : 0));
-    *p++ = (char)('0' + (prefs.DisplayDepth / 100));
-    *p++ = (char)('0' + (prefs.DisplayDepth / 10) % 10);
-    *p++ = (char)('0' + prefs.DisplayDepth % 10);
-    *p++ = ' ';
-    *p++ = (char)('0' + (UsePrivateUiPens() ? 1 : 0));
-    *p++ = (char)('0' + (visualInfos ? 1 : 0));
-    *p++ = (char)('0' + (drawInfo ? 1 : 0));
-    *p++ = ' ';
-    *p++ = (char)('0' + ngadgets / 10);
-    *p++ = (char)('0' + ngadgets % 10);
-    *p++ = '\r';
-    *p++ = '\n';
-
-    fh = Open("PROGDIR:Dlg.txt", MODE_NEWFILE);
-    if (fh)
-    {
-        Write(fh, buf, (LONG)(p - buf));
-        Close(fh);
-    }
-}
-
 /* Gray dialog base on 256-colour screens: a BackFill hook, which paints
  * only damaged areas and can never cover gadgets (a plain RectFill after
  * OpenWindow demonstrably hid every GadTools frame on fullscreen while
@@ -260,6 +217,57 @@ void ComputeFont( UWORD width, UWORD height )
 UseTopaz:
     Attr.ta_Name = "topaz.font";
     FontX = FontY = Attr.ta_YSize = 8;
+}
+
+/* TEMPORARY DIAGNOSTIC: state snapshot at dialog open (PROGDIR:Dlg.txt).
+ * Answers whether broken dialogs see a stale screen/pens/VisualInfo:
+ * "name entryid wb depth private vi di ngadgets". */
+void DlgDump(const char *which, int ngadgets)
+{
+    static char buf[256];
+    char *p = buf;
+    BPTR fh;
+    ULONG v;
+    int n;
+
+    while (*which)
+        *p++ = *which++;
+    *p++ = ' ';
+    v = (ULONG)sessionSettingsId;
+    for (n = 7; n >= 0; n--)
+    {
+        UBYTE nib = (UBYTE)((v >> (n * 4)) & 0xF);
+        *p++ = (char)(nib < 10 ? '0' + nib : 'A' + nib - 10);
+    }
+    *p++ = ' ';
+    *p++ = (char)('0' + (isRunningOnWB ? 1 : 0));
+    *p++ = (char)('0' + (prefs.DisplayDepth / 100));
+    *p++ = (char)('0' + (prefs.DisplayDepth / 10) % 10);
+    *p++ = (char)('0' + prefs.DisplayDepth % 10);
+    *p++ = ' ';
+    *p++ = (char)('0' + (UsePrivateUiPens() ? 1 : 0));
+    *p++ = (char)('0' + (visualInfos ? 1 : 0));
+    *p++ = (char)('0' + (drawInfo ? 1 : 0));
+    *p++ = ' ';
+    *p++ = (char)('0' + ngadgets / 10);
+    *p++ = (char)('0' + ngadgets % 10);
+    *p++ = ' ';
+    *p++ = (char)('0' + FontX / 100);
+    *p++ = (char)('0' + (FontX / 10) % 10);
+    *p++ = (char)('0' + FontX % 10);
+    *p++ = 'x';
+    *p++ = (char)('0' + FontY / 100);
+    *p++ = (char)('0' + (FontY / 10) % 10);
+    *p++ = (char)('0' + FontY % 10);
+    *p++ = '\r';
+    *p++ = '\n';
+
+    fh = Open("PROGDIR:Dlg.txt", MODE_NEWFILE);
+    if (fh)
+    {
+        Write(fh, buf, (LONG)(p - buf));
+        Close(fh);
+    }
 }
 
 static int OpenABookWindow( void )
