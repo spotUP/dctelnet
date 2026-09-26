@@ -604,6 +604,7 @@ BOOL GetStringRequester(struct Window *parent, STRPTR title, STRPTR prompt,
     PaintDialogBackground(win);
     DlgDump("requester", 3);
     GT_RefreshWindow(win, NULL);
+    RefreshGadgets(gadList, win, NULL);
 
     ActivateGadget(stringGad, win, NULL);
 

@@ -307,6 +307,9 @@ static int OpenABookWindow( void )
     return( 4L );*/
 
     GT_RefreshWindow( aBookWnd, NULL );
+    /* Unconditional: GT_RefreshWindow is damage-driven and will not repaint
+     * what our base fill covered behind layers' back. */
+    RefreshGadgets( aBookGList, aBookWnd, NULL );
 
     ComputeFont( aBookWidth, aBookHeight );
 
@@ -900,6 +903,7 @@ static int OpenEditProfileWindow( void )
     return( 4L );*/
 
     GT_RefreshWindow( editProfileWnd, NULL );
+    RefreshGadgets( editProfileGList, editProfileWnd, NULL );
 
     ComputeFont( editProfileWidth, editProfileHeight );
 
@@ -1510,6 +1514,7 @@ static int OpenFKeysWindow( void )
     PaintDialogBackground(fKeysWnd);
     DlgDump("fkeys", 13);
     GT_RefreshWindow( fKeysWnd, NULL );
+    RefreshGadgets( fKeysGList, fKeysWnd, NULL );
 
     return( 0L );
 }
