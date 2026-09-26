@@ -52,8 +52,13 @@ static struct Hook dialogBackFillHook =
 
 void PaintDialogBackground(struct Window *wnd)
 {
-    if (wnd == NULL || wnd->WLayer == NULL || !UsePrivateUiPens())
+    if (wnd == NULL || wnd->WLayer == NULL || !UsePrivateUiPens() || drawInfo == NULL)
         return;
+    /* Initial base now (the hook below only fires on future damage). */
+    SetAPen(wnd->RPort, drawInfo->dri_Pens[BACKGROUNDPEN]);
+    RectFill(wnd->RPort, wnd->BorderLeft, wnd->BorderTop,
+             wnd->Width - wnd->BorderRight - 1,
+             wnd->Height - wnd->BorderBottom - 1);
     InstallLayerHook(wnd->WLayer, &dialogBackFillHook);
 }
 
