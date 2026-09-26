@@ -3344,6 +3344,10 @@ void OpenAppWindow(void)
                 LoadRGB32(&scr->ViewPort, rgb32table);
             else
                 LoadRGB4(&scr->ViewPort, (UWORD *)&prefs.color, 16);
+            /* The copperlist must pick up the new registers (colormap RAM
+             * alone does not repaint the hardware). */
+            MakeScreen(scr);
+            RethinkDisplay();
         }
         else
             LoadRGB4(&scr->ViewPort, (UWORD *)&prefs.color, 16);
