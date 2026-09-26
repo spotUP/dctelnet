@@ -313,20 +313,19 @@ static void test_rgb32_table(void) {
     n = SitePrefs_BuildRGB32Table(ansi, ui, table, SITE_PREFS_RGB32_TABLE);
     assert(n == SITE_PREFS_RGB32_TABLE);
 
-    /* ANSI record: count 16 from 0, then R/G/B triplets. */
-    assert(table[0] == (((ULONG)16 << 16) | 0));
+    /* Single record: count 32 from 0, then ANSI triplets... */
+    assert(table[0] == (((ULONG)32 << 16) | 0));
     assert(table[1] == 0x11111111UL);
     assert(table[2] == 0x22222222UL);
     assert(table[3] == 0x33333333UL);
 
-    /* UI record starts at 1 + 16*3 = 49: count 16 from 16. */
-    assert(table[49] == (((ULONG)16 << 16) | 16));
-    assert(table[50] == 0x00000000UL);
-    assert(table[51] == 0x55555555UL);
-    assert(table[52] == 0xAAAAAAAAUL);
+    /* ...then UI triplets at 1 + 16*3 = 49. */
+    assert(table[49] == 0x00000000UL);
+    assert(table[50] == 0x55555555UL);
+    assert(table[51] == 0xAAAAAAAAUL);
 
     /* Zero terminator. */
-    assert(table[98] == 0);
+    assert(table[97] == 0);
 
     assert(SitePrefs_BuildRGB32Table(ansi, ui, short_table,
                                      SITE_PREFS_RGB32_TABLE - 1) == 0);

@@ -59,9 +59,10 @@ void SitePrefs_DeriveAnsi32(struct PrefsStruct *entry);
 
 /* -- 256-colour palette records (deeper screens) -- */
 
-/* LoadRGB32 record-table ULONGs: (1 + 16*3) ANSI at 0, (1 + 16*3) UI
- * at 16, plus the zero terminator. */
-#define SITE_PREFS_RGB32_TABLE 99
+/* LoadRGB32 record-table ULONGs: ONE record (count 32 from 0: 16 ANSI
+ * then 16 UI) plus the zero terminator. A single contiguous record avoids
+ * second-record handling differences across Kickstarts. */
+#define SITE_PREFS_RGB32_TABLE 98
 
 /* 32-bit-fraction triplet to XRGB 0xRRGGBB00 (top byte of each). */
 ULONG SitePrefs_TripletToXRGB(ULONG r, ULONG g, ULONG b);

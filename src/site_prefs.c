@@ -124,7 +124,7 @@ size_t SitePrefs_BuildRGB32Table(const ULONG ansi32[16], const ULONG ui32[16],
         tableLen < SITE_PREFS_RGB32_TABLE)
         return 0;
 
-    table[pos++] = ((ULONG)16 << 16) | 0;
+    table[pos++] = ((ULONG)32 << 16) | 0;
     for (i = 0; i < 16; i++)
     {
         v = ansi32[i];
@@ -133,7 +133,6 @@ size_t SitePrefs_BuildRGB32Table(const ULONG ansi32[16], const ULONG ui32[16],
         table[pos++] = ((v >> 8) & 0xFF) * 0x01010101UL;
     }
 
-    table[pos++] = ((ULONG)16 << 16) | 16;
     for (i = 0; i < 16; i++)
     {
         v = ui32[i];
