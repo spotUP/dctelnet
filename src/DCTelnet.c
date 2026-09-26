@@ -833,7 +833,7 @@ static BOOL InitializeReqToolsLib(ULONG reqtoolsTags[5])
 /* Deepest depth the screen-mode requesters may offer: 256 colours need
  * V39+ for LoadRGB32/GetRGB32, and the binary-only XEM library stays
  * on depth<=4. */
-static UWORD ScreenMaxDepth(void)
+UWORD ScreenMaxDepth(void)
 {
     if (prefs.flags & FLAG_USE_XEM_LIBRARY)
         return 4;

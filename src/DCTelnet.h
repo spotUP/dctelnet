@@ -202,6 +202,7 @@ void DisconnectBeforeEntryConnect(void);   /* Address Book: end live session fir
 void ApplyEntrySettings(const struct PrefsStruct *entry, ULONG settingsId);
 BOOL SaveEntrySettings(ULONG settingsId, const struct PrefsStruct *settings);
 BOOL UsePrivateUiPens(void);   /* private UI pens on 256-colour screens */
+UWORD ScreenMaxDepth(void);   /* deepest depth the mode requesters may offer */
 void SimpleReq(char *str);
 void SetWaitPointer(struct Window * window);
 UWORD BeginServerConnection(char *servername, UWORD port);

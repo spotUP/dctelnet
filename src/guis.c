@@ -786,9 +786,9 @@ add:
 
 static struct Window         *editProfileWnd;           // "Edit Address Book Profile" window
 static struct Gadget         *editProfileGList;         // "Edit Address Book Profile" window GList
-static struct Gadget         *editProfileGadgets[14];   // "Edit Address Book Profile" window gadgets
+static struct Gadget         *editProfileGadgets[20];   // "Edit Address Book Profile" window gadgets
 #define editProfileWidth 450
-#define editProfileHeight 143
+#define editProfileHeight 173
 
 static UBYTE editProfileGTypes[] = {
     STRING_KIND,
@@ -804,15 +804,21 @@ static UBYTE editProfileGTypes[] = {
     BUTTON_KIND,
     CHECKBOX_KIND,
     TEXT_KIND,
-    BUTTON_KIND
+    BUTTON_KIND,
+    BUTTON_KIND,
+    TEXT_KIND,
+    CHECKBOX_KIND,
+    CHECKBOX_KIND,
+    CHECKBOX_KIND,
+    CHECKBOX_KIND
 };
 
 static struct MyNewGadget editProfileNGad[] = {
     120, 5, 317, 13, (UBYTE *)"_Site Name:",
     120, 21, 317, 13, (UBYTE *)"_Address:",
     121, 37, 177, 13, (UBYTE *)"Last Called:",
-    3, 128, 101, 13, (UBYTE *)"_Ok",
-    345, 128, 101, 13, (UBYTE *)"_Cancel",
+    3, 158, 101, 13, (UBYTE *)"_Ok",
+    345, 158, 101, 13, (UBYTE *)"_Cancel",
     365, 37, 72, 13, (UBYTE *)"_Port:",
     120, 53, 317, 13, (UBYTE *)"_Username:",
     120, 68, 317, 13, (UBYTE *)"Pass_word:",
@@ -820,8 +826,14 @@ static struct MyNewGadget editProfileNGad[] = {
     3, 98, 175, 13, (UBYTE *)"PETSCII _Mode",
     185, 98, 100, 13, (UBYTE *)"_Font...",
     292, 98, 145, 13, (UBYTE *)"",
-    3, 113, 180, 13, (UBYTE *)"Use Curren_t Settings",
-    267, 113, 180, 13, (UBYTE *)"Use _Global Settings",
+    3, 113, 150, 13, (UBYTE *)"Screen Mo_de...",
+    160, 113, 277, 13, (UBYTE *)"",
+    3, 128, 100, 13, (UBYTE *)"_Echo",
+    108, 128, 100, 13, (UBYTE *)"_Raw",
+    213, 128, 110, 13, (UBYTE *)"_BS/DEL",
+    328, 128, 109, 13, (UBYTE *)"CR+_LF",
+    3, 143, 180, 13, (UBYTE *)"Use Curren_t Settings",
+    267, 143, 180, 13, (UBYTE *)"Use _Global Settings",
 };
 
 static ULONG editProfileGTags[] = {
@@ -838,7 +850,13 @@ static ULONG editProfileGTags[] = {
     (GT_Underscore), '_', (TAG_DONE),
     (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
     GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE),
-    (GT_Underscore), '_', (TAG_DONE)
+    (GT_Underscore), '_', (TAG_DONE),
+    (GT_Underscore), '_', (TAG_DONE),
+    GTTX_Text, 0, (GTTX_Border), TRUE, (TAG_DONE),
+    (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
+    (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
+    (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE),
+    (GT_Underscore), '_', (GTCB_Checked), FALSE, (TAG_DONE)
 };
 
 /* Initial-value slots in editProfileGTags (must match the table above;
@@ -852,6 +870,11 @@ static ULONG editProfileGTags[] = {
 #define ETAG_SETTINGS 57
 #define ETAG_PETSCII 69
 #define ETAG_FONTNAME 73
+#define ETAG_SCREEN 84
+#define ETAG_ECHO 90
+#define ETAG_RAW 95
+#define ETAG_BSDEL 100
+#define ETAG_CRLF 105
 
 // Draw the Edit Address Book Profile window
 static int OpenEditProfileWindow( void )
@@ -910,7 +933,7 @@ static int OpenEditProfileWindow( void )
     DrawBevelBox( editProfileWnd->RPort, OffX + ComputeX( 3 ),
                     OffY + ComputeY( 1 ),
                     ComputeX( 444 ),
-                    ComputeY( 126 ),
+                    ComputeY( 141 ),
                     GT_VisualInfo, visualInfos, TAG_DONE );
     return( 0L );
 }
@@ -960,24 +983,43 @@ static void EditSettingsRefresh(const struct PrefsStruct *staged,
                       GTTX_Text, labelBuf, TAG_DONE);
 }
 
-/* Push the staged PETSCII/font into the live gadgets (window open). */
-static void EditStagedRefresh(const struct PrefsStruct *staged,
-                              char *labelBuf, size_t labelLen, ULONG settingsId)
+/* Push the staged PETSCII/font/screen/toggles into the live gadgets
+ * (window must be open). */
+static void EditStagedRefresh(struct PrefsStruct *staged,
+                              char *labelBuf, size_t labelLen, ULONG settingsId,
+                              char *screenBuf)
 {
+    mysprintf(screenBuf, "%lux%lux%lu", (ULONG)staged->DisplayWidth,
+              (ULONG)staged->DisplayHeight, (ULONG)staged->DisplayDepth);
     GT_SetGadgetAttrs(editProfileGadgets[GD_PETSCII], editProfileWnd, 0,
                       GTCB_Checked, (staged->flags & FLAG_PETSCII_MODE) ? TRUE : FALSE,
                       TAG_DONE);
     GT_SetGadgetAttrs(editProfileGadgets[GD_FONT_TEXT], editProfileWnd, 0,
                       GTTX_Text, staged->fontname, TAG_DONE);
+    GT_SetGadgetAttrs(editProfileGadgets[GD_SCREEN_TEXT], editProfileWnd, 0,
+                      GTTX_Text, screenBuf, TAG_DONE);
+    GT_SetGadgetAttrs(editProfileGadgets[GD_ECHO], editProfileWnd, 0,
+                      GTCB_Checked, (staged->flags & FLAG_LOCAL_ECHO) ? TRUE : FALSE,
+                      TAG_DONE);
+    GT_SetGadgetAttrs(editProfileGadgets[GD_RAW], editProfileWnd, 0,
+                      GTCB_Checked, (staged->flags & FLAG_RAW_CONNECTION) ? TRUE : FALSE,
+                      TAG_DONE);
+    GT_SetGadgetAttrs(editProfileGadgets[GD_BSDEL], editProfileWnd, 0,
+                      GTCB_Checked, (staged->flags & FLAG_BS_DEL_SWAP) ? TRUE : FALSE,
+                      TAG_DONE);
+    GT_SetGadgetAttrs(editProfileGadgets[GD_CRLF], editProfileWnd, 0,
+                      GTCB_Checked, (staged->flags & FLAG_RETURN_CRLF) ? TRUE : FALSE,
+                      TAG_DONE);
     EditSettingsRefresh(staged, labelBuf, labelLen, settingsId);
 }
 
 /* "Use Current Settings": the entry gets its own settings on OK (a fresh
  * id when it has none). Snapshots the live effective prefs into the
- * staged copy, which the checkbox/font buttons may then adjust. */
+ * staged copy, which the checkbox/font/screen buttons may then adjust. */
 static void EditUseCurrentSettings(struct List *bookList, ULONG *newSettingsId,
                                    struct PrefsStruct *staged,
-                                   char *labelBuf, size_t labelLen)
+                                   char *labelBuf, size_t labelLen,
+                                   char *screenBuf)
 {
     if (*newSettingsId == 0)
     {
@@ -989,33 +1031,55 @@ static void EditUseCurrentSettings(struct List *bookList, ULONG *newSettingsId,
         }
     }
     *staged = prefs;
-    EditStagedRefresh(staged, labelBuf, labelLen, *newSettingsId);
+    EditStagedRefresh(staged, labelBuf, labelLen, *newSettingsId, screenBuf);
 }
 
 /* "Use Global Settings": drop the entry's settings on OK (file deleted). */
 static void EditUseGlobalSettings(ULONG *newSettingsId,
                                   struct PrefsStruct *staged,
-                                  char *labelBuf, size_t labelLen)
+                                  char *labelBuf, size_t labelLen,
+                                  char *screenBuf)
 {
     *newSettingsId = 0;
     *staged = globalPrefs;
-    EditStagedRefresh(staged, labelBuf, labelLen, 0);
+    EditStagedRefresh(staged, labelBuf, labelLen, 0, screenBuf);
 }
 
-/* PETSCII checkbox (button or 'M' key): toggle the staged flag and force
- * the gadget to match, so both stay in sync however GadTools toggles. */
-static void EditTogglePetscii(struct PrefsStruct *staged,
-                              char *labelBuf, size_t labelLen, ULONG settingsId)
+/* Staged flag checkbox (button or key): toggle and force the gadget to
+ * match, so both stay in sync however GadTools toggles. */
+static void EditToggleFlag(struct PrefsStruct *staged, ULONG flag, UWORD gadgetID,
+                           char *labelBuf, size_t labelLen, ULONG settingsId)
 {
-    if (staged->flags & FLAG_PETSCII_MODE)
-        staged->flags &= ~FLAG_PETSCII_MODE;
+    if (staged->flags & flag)
+        staged->flags &= ~flag;
     else
-        staged->flags |= FLAG_PETSCII_MODE;
-    GT_SetGadgetAttrs(editProfileGadgets[GD_PETSCII], editProfileWnd, 0,
-                      GTCB_Checked, (staged->flags & FLAG_PETSCII_MODE) ? TRUE : FALSE,
+        staged->flags |= flag;
+    GT_SetGadgetAttrs(editProfileGadgets[gadgetID], editProfileWnd, 0,
+                      GTCB_Checked, (staged->flags & flag) ? TRUE : FALSE,
                       TAG_DONE);
     EditSettingsRefresh(staged, labelBuf, labelLen, settingsId);
 }
+
+/* Screen button: pick straight into the staged copy. */
+static void EditPickScreen(struct PrefsStruct *staged, char *screenBuf)
+{
+    ULONG id = staged->DisplayID;
+    UWORD w = staged->DisplayWidth, h = staged->DisplayHeight, d = staged->DisplayDepth;
+
+    if (ScreenModeRequester(editProfileWnd, &id, &w, &h, &d, ScreenMaxDepth()))
+    {
+        staged->DisplayID = id;
+        staged->DisplayWidth = w;
+        staged->DisplayHeight = h;
+        staged->DisplayDepth = d;
+        mysprintf(screenBuf, "%lux%lux%lu", (ULONG)w, (ULONG)h, (ULONG)d);
+        EditEraseTextGadget(GD_SCREEN_TEXT);
+        GT_SetGadgetAttrs(editProfileGadgets[GD_SCREEN_TEXT], editProfileWnd, 0,
+                          GTTX_Text, screenBuf, TAG_DONE);
+    }
+}
+
+/* PETSCII checkbox (button or 'M' key) is handled by EditToggleFlag. */
 
 /* Font button (or 'F' key): pick straight into the staged copy. */
 static void EditPickFont(struct PrefsStruct *staged)
@@ -1042,6 +1106,7 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
 {
     char strLastTime[2 * LEN_DATSTRING];
     char strSettings[24];
+    char strScreen[32];
     ULONG newSettingsId;
     struct PrefsStruct stagedSettings;
     struct IntuiMessage *message;
@@ -1069,9 +1134,20 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
     editProfileGTags[ETAG_PASSWORD] = (unsigned long)book->password;
     EditSettingsSummary(&stagedSettings, newSettingsId, strSettings, sizeof(strSettings));
     editProfileGTags[ETAG_SETTINGS] = (unsigned long)strSettings;
+    mysprintf(strScreen, "%lux%lux%lu", (ULONG)stagedSettings.DisplayWidth,
+              (ULONG)stagedSettings.DisplayHeight, (ULONG)stagedSettings.DisplayDepth);
+    editProfileGTags[ETAG_SCREEN] = (unsigned long)strScreen;
     editProfileGTags[ETAG_PETSCII] =
         (stagedSettings.flags & FLAG_PETSCII_MODE) ? TRUE : FALSE;
     editProfileGTags[ETAG_FONTNAME] = (unsigned long)stagedSettings.fontname;
+    editProfileGTags[ETAG_ECHO] =
+        (stagedSettings.flags & FLAG_LOCAL_ECHO) ? TRUE : FALSE;
+    editProfileGTags[ETAG_RAW] =
+        (stagedSettings.flags & FLAG_RAW_CONNECTION) ? TRUE : FALSE;
+    editProfileGTags[ETAG_BSDEL] =
+        (stagedSettings.flags & FLAG_BS_DEL_SWAP) ? TRUE : FALSE;
+    editProfileGTags[ETAG_CRLF] =
+        (stagedSettings.flags & FLAG_RETURN_CRLF) ? TRUE : FALSE;
 
     // Open the Edit Profile window
     if(OpenEditProfileWindow() == RETURN_OK)
@@ -1120,17 +1196,42 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
                         case 'W':  vgad = editProfileGadgets[GD_PASSWORD];    break;
                         case 'T':  EditUseCurrentSettings(bookList, &newSettingsId,
                                                           &stagedSettings,
-                                                          strSettings, sizeof(strSettings));
+                                                          strSettings, sizeof(strSettings),
+                                                          strScreen);
                                    break;
                         case 'G':  EditUseGlobalSettings(&newSettingsId,
                                                          &stagedSettings,
-                                                         strSettings, sizeof(strSettings));
+                                                         strSettings, sizeof(strSettings),
+                                                         strScreen);
                                    break;
-                        case 'M':  EditTogglePetscii(&stagedSettings,
-                                                     strSettings, sizeof(strSettings),
-                                                     newSettingsId);
+                        case 'M':  EditToggleFlag(&stagedSettings, FLAG_PETSCII_MODE,
+                                                  GD_PETSCII,
+                                                  strSettings, sizeof(strSettings),
+                                                  newSettingsId);
                                    break;
                         case 'F':  EditPickFont(&stagedSettings);
+                                   break;
+                        case 'E':  EditToggleFlag(&stagedSettings, FLAG_LOCAL_ECHO,
+                                                  GD_ECHO,
+                                                  strSettings, sizeof(strSettings),
+                                                  newSettingsId);
+                                   break;
+                        case 'R':  EditToggleFlag(&stagedSettings, FLAG_RAW_CONNECTION,
+                                                  GD_RAW,
+                                                  strSettings, sizeof(strSettings),
+                                                  newSettingsId);
+                                   break;
+                        case 'B':  EditToggleFlag(&stagedSettings, FLAG_BS_DEL_SWAP,
+                                                  GD_BSDEL,
+                                                  strSettings, sizeof(strSettings),
+                                                  newSettingsId);
+                                   break;
+                        case 'L':  EditToggleFlag(&stagedSettings, FLAG_RETURN_CRLF,
+                                                  GD_CRLF,
+                                                  strSettings, sizeof(strSettings),
+                                                  newSettingsId);
+                                   break;
+                        case 'D':  EditPickScreen(&stagedSettings, strScreen);
                                    break;
                     }
                     if(vgad) ActivateGadget(vgad, editProfileWnd, 0); // Focus gadget
@@ -1150,20 +1251,50 @@ static BOOL EditProfile(struct BookStruct *book, struct List *bookList)
                     case GD_USE_CURRENT:
                         EditUseCurrentSettings(bookList, &newSettingsId,
                                                &stagedSettings,
-                                               strSettings, sizeof(strSettings));
+                                               strSettings, sizeof(strSettings),
+                                               strScreen);
                         break;
                     case GD_USE_GLOBAL:
                         EditUseGlobalSettings(&newSettingsId,
                                               &stagedSettings,
-                                              strSettings, sizeof(strSettings));
+                                              strSettings, sizeof(strSettings),
+                                              strScreen);
                         break;
                     case GD_PETSCII:
-                        EditTogglePetscii(&stagedSettings,
-                                          strSettings, sizeof(strSettings),
-                                          newSettingsId);
+                        EditToggleFlag(&stagedSettings, FLAG_PETSCII_MODE,
+                                       GD_PETSCII,
+                                       strSettings, sizeof(strSettings),
+                                       newSettingsId);
                         break;
                     case GD_FONT_BUTTON:
                         EditPickFont(&stagedSettings);
+                        break;
+                    case GD_SCREEN_BUTTON:
+                        EditPickScreen(&stagedSettings, strScreen);
+                        break;
+                    case GD_ECHO:
+                        EditToggleFlag(&stagedSettings, FLAG_LOCAL_ECHO,
+                                       GD_ECHO,
+                                       strSettings, sizeof(strSettings),
+                                       newSettingsId);
+                        break;
+                    case GD_RAW:
+                        EditToggleFlag(&stagedSettings, FLAG_RAW_CONNECTION,
+                                       GD_RAW,
+                                       strSettings, sizeof(strSettings),
+                                       newSettingsId);
+                        break;
+                    case GD_BSDEL:
+                        EditToggleFlag(&stagedSettings, FLAG_BS_DEL_SWAP,
+                                       GD_BSDEL,
+                                       strSettings, sizeof(strSettings),
+                                       newSettingsId);
+                        break;
+                    case GD_CRLF:
+                        EditToggleFlag(&stagedSettings, FLAG_RETURN_CRLF,
+                                       GD_CRLF,
+                                       strSettings, sizeof(strSettings),
+                                       newSettingsId);
                         break;
                     }
                     break;
