@@ -400,6 +400,38 @@ static void test_contrast_dark_base(void) {
     assert(t_lum(ui[2]) > 200);  /* text went light */
 }
 
+static void test_rgb32_full(void) {
+    ULONG ansi[16], ui[16], rest[224], table[SITE_PREFS_RGB32_FULL];
+    size_t n;
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        ansi[i] = 0x11223300UL;
+        ui[i] = 0x0055AA00UL;
+    }
+    for (i = 0; i < 224; i++)
+        rest[i] = 0x01020300UL + (ULONG)i;
+
+    n = SitePrefs_BuildRGB32Full(ansi, ui, rest, table, SITE_PREFS_RGB32_FULL);
+    assert(n == SITE_PREFS_RGB32_FULL);
+
+    /* Single record: count 256 from 0. */
+    assert(table[0] == (((ULONG)256 << 16) | 0));
+    /* ANSI at 1, UI at 1+48=49, rest at 1+96=97. */
+    assert(table[1] == 0x11111111UL);
+    assert(table[49] == 0x00000000UL);
+    assert(table[97] == 0x01010101UL);
+    assert(table[98] == 0x02020202UL);
+    assert(table[99] == 0x03030303UL);
+    /* Terminator. */
+    assert(table[769] == 0);
+
+    assert(SitePrefs_BuildRGB32Full(ansi, ui, rest, table,
+                                    SITE_PREFS_RGB32_FULL - 1) == 0);
+    assert(SitePrefs_BuildRGB32Full(NULL, ui, rest, table,
+                                    SITE_PREFS_RGB32_FULL) == 0);
+}
+
 static void test_sidecar_v1_legacy(void) {    struct PrefsStruct entry, back;
     UBYTE blob[4 + SITE_PREFS_V1_PREFIX + 8];
     size_t colorOff;
@@ -463,6 +495,7 @@ int main(void) {
     test_sidecar_v1_legacy();
     test_triplet_and_back();
     test_rgb32_table();
+    test_rgb32_full();
     test_contrast_flat_theme();
     test_contrast_healthy_untouched();
     test_contrast_dark_base();

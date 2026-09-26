@@ -145,6 +145,35 @@ size_t SitePrefs_BuildRGB32Table(const ULONG ansi32[16], const ULONG ui32[16],
     return pos;
 }
 
+static void rgb32_triplet(ULONG xrgb, ULONG *table, size_t *pos)
+{
+    table[(*pos)++] = ((xrgb >> 24) & 0xFF) * 0x01010101UL;
+    table[(*pos)++] = ((xrgb >> 16) & 0xFF) * 0x01010101UL;
+    table[(*pos)++] = ((xrgb >> 8) & 0xFF) * 0x01010101UL;
+}
+
+size_t SitePrefs_BuildRGB32Full(const ULONG ansi32[16], const ULONG ui32[16],
+                                const ULONG rest[224], ULONG *table,
+                                size_t tableLen)
+{
+    size_t pos = 0;
+    size_t i;
+
+    if (ansi32 == NULL || ui32 == NULL || rest == NULL || table == NULL ||
+        tableLen < SITE_PREFS_RGB32_FULL)
+        return 0;
+
+    table[pos++] = ((ULONG)256 << 16) | 0;
+    for (i = 0; i < 16; i++)
+        rgb32_triplet(ansi32[i], table, &pos);
+    for (i = 0; i < 16; i++)
+        rgb32_triplet(ui32[i], table, &pos);
+    for (i = 0; i < 224; i++)
+        rgb32_triplet(rest[i], table, &pos);
+    table[pos++] = 0;
+    return pos;
+}
+
 /* dri_Pens slot order (intuition/screens.h) for the UI block. */
 #define UIP_TEXT 2
 #define UIP_SHINE 3

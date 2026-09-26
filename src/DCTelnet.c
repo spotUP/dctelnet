@@ -272,7 +272,8 @@ static UWORD colorPens[]  = { 1,4,1,1,6,4,1,0,5,4,1,6,65535 };
  * longer hijacks title bar/menus/gadgets. A custom screen owns its whole
  * colormap, so no ObtainPen/ReleasePen is needed. */
 static UWORD uiPens[] = { 16,17,18,19,20,21,22,23,24,25,26,27,65535 };
-static ULONG rgb32table[SITE_PREFS_RGB32_TABLE];
+static ULONG rgb32table[SITE_PREFS_RGB32_FULL];
+static ULONG wbRestPens[224];
 static UWORD color[] = { 0x0000, 0x0DDD, 0x00D0, 0x0DD0, 0x000D, 0x0D0D, 0x00DD, 0x0D00,
           0x0555, 0x0FFF, 0x00F0, 0x0FF0, 0x000F, 0x0F0F, 0x00FF, 0x0F00, 65535 };
 /*                 black,    white,  green, yellow, blue, purple, aqua,   red */
@@ -3161,6 +3162,8 @@ static void SampleWorkbenchUiColors(ULONG ui32[16])
 
     for (i = 0; i < 16; i++)
         ui32[i] = fallback[i];
+    for (i = 0; i < 224; i++)
+        wbRestPens[i] = 0;
 
     wb = LockPubScreen("Workbench");
     if (wb == NULL)
@@ -3182,6 +3185,17 @@ static void SampleWorkbenchUiColors(ULONG ui32[16])
     }
     FreeScreenDrawInfo(wb, wbDraw);
     UnlockPubScreen(NULL, wb);
+    {
+        ULONG wbCount = (ULONG)wb->ViewPort.ColorMap->Count;
+        ULONG n = wbCount > 32 ? wbCount - 32 : 0;
+        if (n > 224)
+            n = 224;
+        for (i = 0; (ULONG)i < n; i++)
+        {
+            GetRGB32(wb->ViewPort.ColorMap, 32 + (ULONG)i, 1, trip);
+            wbRestPens[i] = SitePrefs_TripletToXRGB(trip[0], trip[1], trip[2]);
+        }
+    }
 
     /* WB-flat themes camouflage bevels/faces: enforce contrast. */
     SitePrefs_FixUiContrast(ui32);
@@ -3335,8 +3349,8 @@ void OpenAppWindow(void)
             ULONG ui32[16];
 
             SampleWorkbenchUiColors(ui32);
-            if (SitePrefs_BuildRGB32Table(prefs.ansi32, ui32,
-                                          rgb32table, SITE_PREFS_RGB32_TABLE) != 0)
+            if (SitePrefs_BuildRGB32Full(prefs.ansi32, ui32, wbRestPens,
+                                         rgb32table, SITE_PREFS_RGB32_FULL) != 0)
                 LoadRGB32(&scr->ViewPort, rgb32table);
             else
                 LoadRGB4(&scr->ViewPort, (UWORD *)&prefs.color, 16);

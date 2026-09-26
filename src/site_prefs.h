@@ -75,6 +75,14 @@ UWORD SitePrefs_XRGBtoRGB4(ULONG xrgb);
 size_t SitePrefs_BuildRGB32Table(const ULONG ansi32[16], const ULONG ui32[16],
                                  ULONG *table, size_t tableLen);
 
+/* Full 256-entry table: ANSI 0-15, UI 16-31, extended entries 32-255
+ * (e.g. a copy of the Workbench palette, so anything reading past 31
+ * finds sane values instead of fresh-black). Single record + terminator. */
+#define SITE_PREFS_RGB32_FULL 770
+size_t SitePrefs_BuildRGB32Full(const ULONG ansi32[16], const ULONG ui32[16],
+                                const ULONG rest[224], ULONG *table,
+                                size_t tableLen);
+
 /* Enforce readable contrast inside a 16-entry UI palette (dri_Pens order
  * for slots 0-11: DETAIL/BLOCK/TEXT/SHINE/SHADOW/FILL/FILLTEXT/BACKGROUND
  * at 0-7): TEXT readable on BACKGROUND, FILLTEXT on FILL, SHINE/SHADOW
