@@ -43,6 +43,13 @@ UWORD ScreenFont_MaxWindowWidth(UWORD columns, UWORD cellX, UWORD borders);
  * looks squeezed there; the tool bar takes its wide icons. */
 BOOL ScreenFont_TallPixels(UWORD resolutionX, UWORD resolutionY);
 
+/* Which encoding a font has: its glyph 0xC4 is a horizontal line in an IBM
+ * (CP437) font and a letter (Latin-1 A diaeresis) in an Amiga one. TRUE when
+ * the nrows glyph rows (left-aligned, bit 15 the leftmost pixel) of a glyph
+ * width pixels wide are a line: every row empty or full, at least one full,
+ * and at most half of them (a full block is not a line). */
+BOOL ScreenFont_GlyphIsHLine(const UWORD *rows, int nrows, int width);
+
 #define TOPAZ_PRO_NAME "TopazPro.font"
 #define TOPAZ_PRO_SIZE 16
 
