@@ -86,6 +86,7 @@ extern struct Library *CyberGfxBase;
 #include "requesters.h"
 #include "utils.h"
 #include "prefs.h"
+#include "renderer.h"
 #include "prefs_file.h"
 #include "palette.h"
 
@@ -249,7 +250,7 @@ struct IntuitionBase *IntuitionBase;
 struct GfxBase *GfxBase;
 struct Library *KeymapBase, *GadToolsBase, *AslBase, *SocketBase;
 struct Library *DiskfontBase, *IconBase, *WorkbenchBase, *UtilityBase;
-struct Library *LayersBase;     // V39, optional: the own screen's black background
+struct Library *LayersBase;     // the terminal's draws (vtbuiltin.c); V39: the own screen's black background
 struct Library *CyberGfxBase;   // optional: recolours a true-colour terminal live
 
 struct Window *win, *scrollbackWin, *toolBarWin;
@@ -382,6 +383,7 @@ BYTE dontUseSig31 = -1; // don't use it, ibmcon.device will destroy it.
 #include "DCTelnet-debug.h"
 #define send_data(data, len) TCPSend((data), (len))
 #include "term-engine.c"
+#include "vtbuiltin.c"
 
 static void ObtainWorkbenchPens(void);
 
@@ -404,37 +406,10 @@ static int BuiltinInit(void)
                          win->Height - win->BorderTop - win->BorderBottom,
                          petsciiFont ? petsciiFont : ansiFont);
     term_set_pens(ansiOwnPens ? ansiColourPens : NULL);
+    if (res == 0)
+        res = VtOpen();
     return res;
 }
-
-/**
- * @brief Tell retro32-term whether anything lies over the terminal: a layer in
- *        front of the terminal window that overlaps it (a requester, another
- *        DCTelnet window, an open menu). It draws straight into the screen
- *        bitmap only while nothing does; otherwise through the window's
- *        RastPort, whose layer keeps what is covered. Before it did, it drew
- *        over such windows, scrolled them along, and left them behind.
- */
-static void BuiltinCovered(void)
-{
-    struct Layer *l;
-    WORD x0, y0, x1, y1;
-    BOOL covered = FALSE;
-
-    if (!scr || !win)
-        return;
-    x0 = win->LeftEdge + win->BorderLeft;
-    y0 = win->TopEdge + win->BorderTop;
-    x1 = win->LeftEdge + win->Width - win->BorderRight - 1;
-    y1 = win->TopEdge + win->Height - win->BorderBottom - 1;
-    if (LayersBase) LockLayerInfo(&scr->LayerInfo); else Forbid();
-    for (l = scr->LayerInfo.top_layer; l && l != win->WLayer && !covered; l = l->back)
-        covered = l->bounds.MinX <= x1 && l->bounds.MaxX >= x0
-               && l->bounds.MinY <= y1 && l->bounds.MaxY >= y0;
-    if (LayersBase) UnlockLayerInfo(&scr->LayerInfo); else Permit();
-    term_covered(covered);
-}
-
 
 static void SelectionHide(void);
 
@@ -443,22 +418,19 @@ static struct AnsiSwap17 consoleSwap;
 
 static void ConWrite(char *data, long len)
 {
+    enum RendererRoute route = Renderer_Route(prefs.State);
+
     SelectionHide();                // the text may land on it
-    if(STATE_IS_NOT(APP_ICONIFIED))
+    if (route != ROUTE_NONE)
     {
-        if (STATE_IS(APP_RENDERER_BUILTIN))
+        if (route == ROUTE_BUILTIN)
         {
-            // With retro32-term, drawing only ever happens with the cursor hidden, so glyphs never
-            // land on an inverted cell.
-            BuiltinCovered();
-            cursor_hide();
-            while (len-- > 0)
-                term_feed((UBYTE)*data++);
-            term_flush();
-            cursor_show();
+            // vtcon parses, retro32-term draws (vtbuiltin.c); drawing only ever happens with
+            // the cursor hidden, so glyphs never land on an inverted cell.
+            VtWrite((const UBYTE *)data, len);
             return; // direct return because maximal optimization is needed for this frequently called function
         }
-        else if (STATE_IS(APP_RENDERER_CONSOLE_DEVICE | APP_RENDERER_IBMCON_DEVICE))
+        else if (route == ROUTE_CONSOLE || route == ROUTE_IBMCON)
         {
             #ifdef _DEBUG
                 if (!writeConsoleReq) RecoveryAlert(
@@ -470,7 +442,7 @@ static void ConWrite(char *data, long len)
 
             // console.device: SGR colours swap 1 and 7 (Ansi_Swap17): it draws plain
             // text in pen 1, white in ibmcon's order, and SGR 31 (red) in pen 1 too.
-            if (STATE_IS(APP_RENDERER_CONSOLE_DEVICE))
+            if (route == ROUTE_CONSOLE)
             {
                 static UBYTE swapped[1024 + ANSI_SWAP17_HELD];
 
@@ -2296,8 +2268,9 @@ static void Receive(void)
                         AddBuf((char *)petsciiOut, petsciiOutLen);
 
                     /* Charset-shift control code (14/142) toggles between the
-                     * upper/graphics and shifted/lowercase C64 charsets --
-                     * swap the active font to match, for what follows. */
+                     * upper/graphics and shifted/lowercase C64 charsets. On a
+                     * C64 the set belongs to the whole screen: swap the font,
+                     * then redraw every cell from the screen model in it. */
                     if (win && petsciiFont && petsciiFontLower) {
                         struct TextFont *wanted = g_petsciiState.shift_lowercase ? petsciiFontLower : petsciiFont;
                         if (win->RPort->Font != wanted)
@@ -2313,6 +2286,12 @@ static void Receive(void)
                                 if (STATE_IS(APP_RENDERER_CONSOLE_DEVICE) && isConDeviceOpened
                                     && writeConsoleReq->io_Unit)
                                     ((struct ConUnit *)writeConsoleReq->io_Unit)->cu_Font = wanted;
+                            }
+                            {
+                                static UBYTE repaint[PETSCII_REPAINT_MAX];
+
+                                ConWrite((char *)repaint,
+                                         (LONG)petscii_repaint(&g_petsciiState, 1, repaint, sizeof(repaint)));
                             }
                         }
                     }
@@ -2752,7 +2731,7 @@ int main(int argc, char *argv[])
         goto clean_exit;
     }
 
-    LayersBase = OpenLibrary("layers.library", 39);
+    LayersBase = OpenLibrary("layers.library", 33);
     CyberGfxBase = OpenLibrary("cybergraphics.library", 40);   // Picasso96 / CyberGraphX
 
     UtilityBase = OpenLibrary("utility.library", 0);
@@ -2925,10 +2904,6 @@ int main(int argc, char *argv[])
             if(i != 0 || SshConn_Buffered()) Receive();
 
         } else { // app is not iconified
-
-            // Windows opened or closed over the built-in renderer's terminal since the last time
-            if (STATE_IS(APP_RENDERER_BUILTIN))
-                BuiltinCovered();
 
             winsig = 1L << win->UserPort->mp_SigBit;
             if(isConnected)
@@ -4123,8 +4098,18 @@ static void GetWindowMsg(struct Window *wwin)
                 if(!(code & IECODE_UP_PREFIX))
                 {
                     int id = Keys_FromRawCode(code);
+                    int c64 = -1;
 
-                    if (id != KEY_NONE)
+                    // PETSCII: CTRL or C= (Left Amiga) with the number row (raw
+                    // keys 1-10 are 1-9, 0) sends the C64's colour and RVS bytes.
+                    if (PETSCII_SESSION() && code >= 0x01 && code <= 0x0A
+                        && (qual & (IEQUALIFIER_CONTROL | IEQUALIFIER_LCOMMAND)))
+                        c64 = petscii_key_from_digit(code == 0x0A ? '0' : (char)('0' + code),
+                                                     (qual & IEQUALIFIER_CONTROL) != 0,
+                                                     (qual & IEQUALIFIER_LCOMMAND) != 0);
+                    if (c64 >= 0)
+                        OutKey((unsigned char)c64);
+                    else if (id != KEY_NONE)
                         SendKey(id);
                     else
                     {
@@ -5204,6 +5189,7 @@ static BOOL OpenConsoleDevice(void)
 static void CloseConsoleDevice(void)
 {
     ReleaseWorkbenchPens();
+    VtClose();
 
     // https://amigadev.elowar.com/read/ADCD_2.1/Devices_Manual_guide/node0190.html
     if (isConDeviceOpened)
@@ -5607,7 +5593,7 @@ void OpenAppWindow(void)
         // The terminal window is 80 columns wide and centred
         // (LimitTerminalWidth): the screen around it is terminal background,
         // ANSI black, not the UI's pen 0 (grey on 32+ colours).
-        if (LayersBase)
+        if (LayersBase && LayersBase->lib_Version >= 39)
             InstallLayerInfoHook(&scr->LayerInfo, &terminalBackFill);
 
         if(STATE_IS(APP_PACKET_WINDOW_ENABLED))
