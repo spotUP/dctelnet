@@ -968,7 +968,7 @@ static void SyncPetsciiDisplay(void)
 
 // The screen mode's pixel shape (DisplayInfo.Resolution), from OpenAppScreen:
 // which of topaz and Topaz Pro a font setting opens as (ScreenFont_ForMode).
-static UWORD modeResX, modeResY;
+UWORD modeResX, modeResY;      // the display mode's resolution ticks (0: unknown)
 
 // The font a setting actually opens on the current mode.
 static void EffectiveFont(struct PrefsStruct *p)
@@ -5028,20 +5028,8 @@ static void ObtainWorkbenchPens(void)
         return;
     Palette_Get(&prefs, colours);
     for (i = 0; i < 16; i++)
-    {
-        ULONG c = Palette_RGB32(colours[i]);
-        ULONG r = ((c >> 16) & 0xFF) * 0x01010101UL, g = ((c >> 8) & 0xFF) * 0x01010101UL,
-              bl = (c & 0xFF) * 0x01010101UL;
-        LONG pen = ObtainBestPen(scr->ViewPort.ColorMap, r, g, bl,
-                                 OBP_Precision, PRECISION_EXACT, TAG_DONE);
-
-        // No pen to share (-1): the nearest colour already there, which
-        // is not ours to release. -1 cast to UBYTE was pen 255.
-        wbPenOwned[i] = pen >= 0;
-        if (pen < 0)
-            pen = FindColor(scr->ViewPort.ColorMap, r, g, bl, -1);
-        ansiColourPens[i] = (UBYTE)pen;
-    }
+        ansiColourPens[i] = ObtainNearestPen(scr->ViewPort.ColorMap, Palette_RGB32(colours[i]),
+                                             PRECISION_EXACT, &wbPenOwned[i]);
     wbPensObtained = TRUE;
     ansiOwnPens = TRUE;
 }
@@ -5455,6 +5443,28 @@ struct Screen* OpenAppScreen(void)
     // colours on pens of their own.
     ansiOwnPens = scr && STATE_IS(APP_FULLSCREEN)
                && Palette_OwnPens(prefs.State, AppScreenDepth(scr), ansiColourPens);
+
+    // The screen shares its free pens (SA_SharePens): the terminal's ANSI
+    // pens and the AGA pointer pens 16-19 are ours, so that no ObtainBestPen()
+    // (the tool bar's icons) takes one and recolours it. They go with the
+    // screen. Without ANSI pens of their own (16 colours, the builtin renderer)
+    // the terminal's colours sit on pens 0-15 itself: every pen of a screen up
+    // to 16 colours, pens 0-19 above. The tool bar then finds its colours among
+    // the pens the screen holds (FindColor) instead of recolouring one.
+    if (scr && STATE_IS(APP_FULLSCREEN) && GfxBase->LibNode.lib_Version >= 39)
+    {
+        UWORD i, depth = AppScreenDepth(scr);
+        UWORD last = depth >= 5 ? 20 : (UWORD)(1 << depth);
+
+        if (ansiOwnPens)
+            for (i = 0; i < 16; i++)
+                ObtainPen(scr->ViewPort.ColorMap, ansiColourPens[i], 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR);
+        else
+            for (i = 0; i < 16 && i < last; i++)
+                ObtainPen(scr->ViewPort.ColorMap, i, 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR);
+        for (i = 16; i < last; i++)
+            ObtainPen(scr->ViewPort.ColorMap, i, 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR);
+    }
 
     // Border blank (V39, ECS/AGA): the overscan border shows colour 0, which
     // on 32+ colours is the UI's grey pen 0 -- keep it black like the terminal.
