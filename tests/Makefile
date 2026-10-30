@@ -10,9 +10,9 @@ CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 STACK_MAX := 400
 STACKCHK := $(shell $(CC) -Werror -Wstack-usage=$(STACK_MAX) -c -x c /dev/null -o /dev/null 2>/dev/null && echo -Wstack-usage=$(STACK_MAX))
 
-TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_renderer test_iconpens
-.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons
-all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons
+TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_renderer test_iconpens test_vtpersonality test_vtpens test_vtinput
+.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null
+all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -37,6 +37,28 @@ check-encoding:
 	; then \
 		echo "ERROR: Disallowed chars found in the files above; they may have been saved as UTF." ; \
 		exit 1 ; \
+	fi
+
+# The debug Amiga build must not use vbcc's -stack-check. Its check compares
+# the stack pointer with ONE global limit, the main task's stack bottom, but
+# DCTelnet runs C code on other processes too (CreateNewProc: the Connecting
+# window task). When that process's stack lies below the main one, every
+# checked call "overflows": the check moves SP onto the main task's stack and
+# calls exit() from the wrong process, and the machine resets (debug build,
+# `DCTelnet <host> <port>`, rig 3, 2026-10-30).
+check-debug-stack:
+	@cd ../src && if LC_ALL=C grep --quiet --text 'CreateNewProc' *.c \
+		&& LC_ALL=C grep --text 'DEBUG_CFLAGS' Makefile | LC_ALL=C grep --quiet -- '[[:space:]]-stack-check'; then \
+		echo "ERROR: src/Makefile debug flags use vbcc -stack-check, which breaks code run by a second process (CreateNewProc)."; \
+		exit 1; \
+	fi
+
+# Kickstart 3.1 CurrentTime() writes both out-parameters, so NULL for either one is a write to
+# address 0 (MuForce LONG WRITE). Host tests cannot link intuition.library, hence a source check.
+check-currenttime-null:
+	@cd ../src && if LC_ALL=C grep --text --line-number --extended-regexp 'CurrentTime[[:space:]]*\([^;]*NULL' *.c; then \
+		echo "ERROR: CurrentTime() called with a NULL argument; pass a dummy ULONG."; \
+		exit 1; \
 	fi
 
 # Parse the shipped PETSCII fonts the way diskfont.library loads them. The
@@ -152,7 +174,17 @@ test_knownhosts: test_knownhosts.c ../src/knownhosts.c ../src/knownhosts.h
 
 # The engine is written for the Amiga: its static helpers are not all used here.
 VTCON := ../src/third_party/vtcon
-test_term_engine: test_term_engine.c ../src/third_party/retro32-term/term-engine.c ../src/vtbuiltin.c \
+VTCONI := -I$(VTCON)/engine
+test_vtpersonality: test_vtpersonality.c ../src/vtpersonality.c ../src/vtpersonality.h
+	$(CC) $(CFLAGS) -Wno-unused-parameter -Ishim $(VTCONI) -o $@ $(filter %.c,$^)
+
+test_vtinput: test_vtinput.c ../src/vtinput.c ../src/vtinput.h $(VTCON)/engine/vtengine.c
+	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim $(VTCONI) -o $@ test_vtinput.c ../src/vtinput.c $(VTCON)/engine/vtengine.c
+
+test_vtpens: test_vtpens.c ../src/vtpens.c ../src/vtpens.h $(VTCON)/engine/vtengine.c
+	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim $(VTCONI) -o $@ test_vtpens.c ../src/vtpens.c $(VTCON)/engine/vtengine.c
+
+test_term_engine: test_term_engine.c ../src/third_party/retro32-term/term-engine.c ../src/vtbuiltin.c ../src/vtpersonality.c ../src/vtpens.c ../src/vtinput.c ../src/vtinput.h \
                   $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
 	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim -I$(VTCON)/engine -I$(VTCON)/render \
-	      -o $@ test_term_engine.c $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
+	      -o $@ test_term_engine.c ../src/vtpersonality.c ../src/vtpens.c ../src/vtinput.c $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
