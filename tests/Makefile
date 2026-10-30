@@ -5,8 +5,8 @@ CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 
 TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist
 
-.PHONY: all clean check-encoding check-fonts
-all: $(TESTS) check-encoding check-fonts
+.PHONY: all clean check-encoding check-fonts check-currenttime-null
+all: $(TESTS) check-encoding check-fonts check-currenttime-null
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -31,6 +31,14 @@ check-encoding:
 	; then \
 		echo "ERROR: Disallowed chars found in the files above; they may have been saved as UTF." ; \
 		exit 1 ; \
+	fi
+
+# Kickstart 3.1 CurrentTime() writes both out-parameters, so NULL for either one is a write to
+# address 0 (MuForce LONG WRITE). Host tests cannot link intuition.library, hence a source check.
+check-currenttime-null:
+	@cd ../src && if LC_ALL=C grep --text --line-number --extended-regexp 'CurrentTime[[:space:]]*\([^;]*NULL' *.c; then \
+		echo "ERROR: CurrentTime() called with a NULL argument; pass a dummy ULONG."; \
+		exit 1; \
 	fi
 
 # Parse the shipped PETSCII fonts the way diskfont.library loads them. The
