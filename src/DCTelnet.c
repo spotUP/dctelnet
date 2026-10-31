@@ -296,13 +296,6 @@ static BOOL displayIsPetscii = FALSE;    // the display was opened for PETSCII
 // Intuition's pens 0-7. On the Workbench they are 16 shared pens (V39).
 static UBYTE ansiColourPens[16];
 static BOOL  ansiOwnPens = FALSE;
-// The cursor shows pen (cell pen ^ PALETTE_CURSOR_MASK): the complement pens of
-// the ANSI pens (Palette_CursorPens) the terminal owns on an own screen. A pen
-// Intuition holds already (ObtainPen fails) keeps its colour.
-static UBYTE cursorPens[16];
-static ULONG cursorColours[16];
-static BOOL  cursorPenOwned[16];
-static int   cursorPenCount = 0;
 static BOOL  wbPensObtained = FALSE;    // ansiColourPens came from ObtainBestPen on the Workbench
 static BOOL  wbPenOwned[16];            // this pen was obtained (and is released on close)
 static BYTE  penTableError = 0;         // io_Error of IBMCMD_SETPENS (IOERR_NOCMD: ibmcon < 1.5)
@@ -1787,19 +1780,6 @@ static void ShowAnsiColours(struct Screen *s, struct PrefsStruct *target)
         else
             SetRGB4(&s->ViewPort, ansiColourPens[i], (c >> 20) & 0xF, (c >> 12) & 0xF, (c >> 4) & 0xF);
     }
-    // The cursor's pens show the inverse of the colour they complement.
-    if (cursorPenCount > 0 && GfxBase->LibNode.lib_Version >= 39)
-    {
-        cursorPenCount = Palette_CursorPens(ansiColourPens, shown, cursorPens, cursorColours);
-        for (i = 0; i < cursorPenCount; i++)
-        {
-            ULONG c = cursorColours[i];
-
-            if (cursorPenOwned[i])
-                SetRGB32(&s->ViewPort, cursorPens[i], ((c >> 16) & 0xFF) * 0x01010101UL,
-                         ((c >> 8) & 0xFF) * 0x01010101UL, (c & 0xFF) * 0x01010101UL);
-        }
-    }
 }
 
 // Load target's palette onto the screen: the ANSI pens (in ANSI order) on 32+
@@ -1876,18 +1856,6 @@ static void ShowEditedColour(int ansi, UWORD rgb4)
     if (ansiOwnPens && wbUiKnown && editPens[ansi] < PALETTE_UI_SHARED)
         return;                 // a UI pen: keeps the Workbench's colour (ShowAnsiColours)
     SetRGB4(&scr->ViewPort, editPens[ansi], (rgb4 >> 8) & 0xF, (rgb4 >> 4) & 0xF, rgb4 & 0xF);
-    if (ansiOwnPens && GfxBase->LibNode.lib_Version >= 39)
-    {
-        // the cursor over this colour: the inverse colour on its complement pen
-        UBYTE pen = (UBYTE)(editPens[ansi] ^ PALETTE_CURSOR_MASK);
-        ULONG c = Palette_RGB32(rgb4) ^ 0x00FFFFFF;
-        int k;
-
-        for (k = 0; k < cursorPenCount; k++)
-            if (cursorPens[k] == pen && cursorPenOwned[k])
-                SetRGB32(&scr->ViewPort, pen, ((c >> 16) & 0xFF) * 0x01010101UL,
-                         ((c >> 8) & 0xFF) * 0x01010101UL, (c & 0xFF) * 0x01010101UL);
-    }
 }
 
 // The preview swatch right of the colour's name. On a true-colour screen
@@ -5651,21 +5619,8 @@ struct Screen* OpenAppScreen(void)
 
     // Own screen with 32+ colours, ibmcon or the built-in renderer: the ANSI
     // colours on pens of their own.
-    cursorPenCount = 0;
     ansiOwnPens = scr && STATE_IS(APP_FULLSCREEN)
                && Palette_OwnPens(prefs.State, AppScreenDepth(scr), ansiColourPens);
-    if (ansiOwnPens && GfxBase->LibNode.lib_Version >= 39)
-    {
-        // The cursor's complement pens (Palette_CursorPens) are the terminal's too, or the
-        // tool bar's ObtainBestPen takes one and the cursor turns that colour.
-        ULONG ignored[16] = { 0 };
-        UWORD i;
-
-        cursorPenCount = Palette_CursorPens(ansiColourPens, ignored, cursorPens, cursorColours);
-        for (i = 0; i < cursorPenCount; i++)
-            cursorPenOwned[i] = ObtainPen(scr->ViewPort.ColorMap, cursorPens[i], 0, 0, 0,
-                                          PEN_EXCLUSIVE | PEN_NO_SETCOLOR) == (LONG)cursorPens[i];
-    }
     if (ansiOwnPens)
         ShowAnsiColours(scr, &prefs);   // exact colours: SA_Colors has 4 bits a gun
 
