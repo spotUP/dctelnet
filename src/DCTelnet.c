@@ -86,6 +86,7 @@ extern struct Library *CyberGfxBase;
 #include "Xem_wrapper.h"
 #include "requesters.h"
 #include "utils.h"
+#include "nearest_pen.h"
 #include "prefs.h"
 #include "renderer.h"
 #include "prefs_file.h"
@@ -1718,13 +1719,10 @@ static struct Hook terminalBackFill = { { NULL, NULL }, (HOOKFUNC)TerminalBackFi
 // A pen DCTelnet draws with itself (LEDs, the Quit item), given as an ANSI
 // colour in ibmcon's order: on 32+ colours it lives on the ANSI pens, with the
 // built-in and XEM renderers pens 0-15 hold the ANSI palette in ANSI order.
-static UWORD LegacyPen(UWORD ibmconIndex)
+UWORD LegacyPen(UWORD ibmconIndex)
 {
-    if (ansiOwnPens)
-        return ansiColourPens[Palette_IbmconToAnsi(ibmconIndex)];
-    if (STATE_IS(APP_RENDERER_BUILTIN | APP_RENDERER_XEM_LIB))
-        return (UWORD)Palette_IbmconToAnsi(ibmconIndex);
-    return ibmconIndex;
+    return Palette_TerminalPen(ibmconIndex, ansiOwnPens ? ansiColourPens : NULL,
+                               STATE_IS(APP_RENDERER_BUILTIN | APP_RENDERER_XEM_LIB));
 }
 
 // The Workbench's UI colours (background, shadow, shine, fill; 0x00RRGGBB):

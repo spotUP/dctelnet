@@ -23,6 +23,7 @@
 #include "DCTelnet.h"
 #include "requesters.h"
 #include "utils.h"
+#include "nearest_pen.h"
 #include "prefs.h"
 #include "site_prefs.h"
 #include "charset.h"               // CHARSET_*
@@ -2308,7 +2309,8 @@ void CheckDimensions(struct NewWindow *newwin)
 }
 
 // Tool bar icons that carry their colours (DCTELNET_PALETTE, iconpens.h) are
-// redrawn with the screen's closest pens: images drawn for fixed pens showed
+// redrawn with the screen's closest pens on the Workbench, and with the pens of
+// their terminal colours on the own screen: images drawn for fixed pens showed
 // whatever colours a screen had there (MagicWB icons on a standard Workbench,
 // on DCTelnet's own 256-colour screen). An icon without the tool type, such as
 // one a user drew, is shown as it is.
@@ -2330,6 +2332,31 @@ static UWORD toolPalettes;
 
 // The standard Workbench colours: the match without ObtainBestPen (OS 2).
 static const ULONG standardPens[4] = { 0xAAAAAA, 0x000000, 0xFFFFFF, 0x6688BB };
+static const UWORD standardRoles[4] = { BACKGROUNDPEN, SHADOWPEN, SHINEPEN, FILLPEN };
+
+// The Workbench pen for an icon colour (OS 3): the icons are drawn in the
+// standard colours and blends of them (antialiased edges). A standard colour
+// takes the screen's pen of the same role, a blend the closest pen to the same
+// blend of those pens' colours. Matched on colour alone, the edges of a custom
+// palette (a dark background, a light symbol) fell on unrelated pens.
+static UBYTE ToolPen(ULONG rgb, BOOL *owned)
+{
+    struct ColorMap *cm = scr->ViewPort.ColorMap;
+    ULONG role[4], c[3];
+    int j;
+
+    *owned = FALSE;
+    for (j = 0; j < 4; j++)
+        if (rgb == standardPens[j])
+            return (UBYTE)drawInfo->dri_Pens[standardRoles[j]];
+    for (j = 0; j < 4; j++)
+    {
+        GetRGB32(cm, drawInfo->dri_Pens[standardRoles[j]], 1, c);
+        role[j] = ((c[0] >> 8) & 0xFF0000) | ((c[1] >> 16) & 0xFF00) | (c[2] >> 24);
+    }
+    return ObtainNearestPen(cm, IconPens_Translate(rgb, standardPens, role, 4), PRECISION_IMAGE,
+                            owned);
+}
 
 static struct Image *RemapToolImage(const struct Image *img, const UBYTE *map, int n, UWORD depth)
 {
@@ -2373,11 +2400,12 @@ static struct ToolPalette *ToolPaletteFor(const char *value, const ULONG *rgb, i
     for (k = 0; k < n; k++)
     {
         tp->owned[k] = FALSE;
-        if (k == 0)                                 // the icon's background
+        if (STATE_IS(APP_FULLSCREEN))               // SCIcons: terminal colour k
+            tp->pen[k] = (UBYTE)LegacyPen((UWORD)k);
+        else if (k == 0)                            // the icon's background
             tp->pen[k] = (UBYTE)drawInfo->dri_Pens[BACKGROUNDPEN];
         else if (GfxBase->LibNode.lib_Version >= 39)
-            tp->pen[k] = ObtainNearestPen(scr->ViewPort.ColorMap, rgb[k], PRECISION_IMAGE,
-                                          &tp->owned[k]);
+            tp->pen[k] = ToolPen(rgb[k], &tp->owned[k]);
         else
             tp->pen[k] = (UBYTE)IconPens_Nearest(rgb[k], standardPens, 4);
     }
@@ -2406,8 +2434,8 @@ static void RemapToolIcon(UWORD i)
     {
         struct Image *img = *render[k];
 
-        // The screen has the icon's colours on the icon's own pens (the default
-        // terminal palette and SCIcons): it is drawn as it was authored.
+        // The icon's pens are the screen's (SCIcons on the console renderers):
+        // it is drawn as it was authored, with no redraw.
         if (!img || IconPens_IsIdentity(tp->pen, n, img->Depth, tp->depth))
             continue;
         if ((toolImage[i][k] = RemapToolImage(img, tp->pen, n, tp->depth)))
@@ -2470,10 +2498,11 @@ void OpenToolBarWindow(char setmenus)
 
         do
         {
-            // The icons carry their colours. On the own screen SCIcons, drawn
-            // for its terminal pens (the pen map is then the identity: they
-            // are shown as drawn, with no redraw); on the Workbench the
-            // Lucide set, in the shape of its pixels.
+            // On the own screen SCIcons, drawn for the terminal colours 0-7
+            // and shown on the pens of those colours whatever the palette
+            // (LegacyPen(): the identity on the console renderers, so no
+            // redraw); on the Workbench the Lucide set, in the shape of its
+            // pixels, on the closest pens.
             if (STATE_IS(APP_FULLSCREEN))
                 strlcpy(buf, "PROGDIR:SCIcons/", sizeof(buf));
             else

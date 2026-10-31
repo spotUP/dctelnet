@@ -334,15 +334,3 @@ int stricmp(const char *a, const char *b)
 }
 #endif
 
-UBYTE ObtainNearestPen(struct ColorMap *cm, ULONG rgb, LONG precision, BOOL *owned)
-{
-    ULONG r = ((rgb >> 16) & 0xFF) * 0x01010101UL, g = ((rgb >> 8) & 0xFF) * 0x01010101UL,
-          b = (rgb & 0xFF) * 0x01010101UL;
-    LONG pen = ObtainBestPen(cm, r, g, b, OBP_Precision, precision, TAG_DONE);
-
-    // -1 cast to UBYTE was pen 255.
-    *owned = pen >= 0;
-    if (pen < 0)
-        pen = FindColor(cm, r, g, b, -1);
-    return (UBYTE)pen;
-}
