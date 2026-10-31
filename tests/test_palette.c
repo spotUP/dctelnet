@@ -221,6 +221,46 @@ static void test_toolbar_red_stays_on_the_terminal_red_pen(void) {
     assert(Palette_TerminalPen(0, ansi, FALSE) == 8);
 }
 
+/* The cursor draws pen (cell pen XOR PALETTE_CURSOR_MASK). At 32+ colours the
+ * ANSI pens are 8-15 and 20-27, so it shows pens 0-7 -- which the screen did
+ * not own: the tool bar's ObtainBestPen took pen 7 and a cursor on a black
+ * cell turned cyan. They are the terminal's now, in the inverse colour. */
+static void test_cursor_on_a_black_cell_stays_white_at_32_colours_when_the_tool_bar_takes_free_pens(void) {
+    UBYTE ansi[16], pens[16], seen[32];
+    ULONG shown[16], colours[16];
+    int depth, i, n;
+
+    assert(PALETTE_CURSOR_MASK == 0x0F);
+    for (depth = 5; depth <= 8; depth++) {
+        assert(Palette_AnsiPens((UWORD)depth, ansi));
+        for (i = 0; i < 16; i++) shown[i] = (i == 0) ? 0x000000 : (i == 7) ? 0xFFFFFF : 0x0000AA;
+        n = Palette_CursorPens(ansi, shown, pens, colours);
+        assert(n == 8);                                 /* pens 0-7, nothing else */
+        memset(seen, 0, sizeof seen);
+        for (i = 0; i < n; i++) seen[pens[i]]++;
+        for (i = 0; i < 8; i++) assert(seen[i] == 1);
+        /* every pen the cursor can show is an ANSI pen or one of those */
+        for (i = 0; i < 16; i++) {
+            UBYTE shows = (UBYTE)(ansi[i] ^ PALETTE_CURSOR_MASK);
+            int j, owned = 0;
+
+            for (j = 0; j < 16; j++) owned |= ansi[j] == shows;
+            for (j = 0; j < n; j++) owned |= pens[j] == shows;
+            assert(owned);
+        }
+        /* black cell (ANSI 0, pen 8) shows pen 7: white; white (ANSI 7, pen 15) shows pen 0: black */
+        for (i = 0; i < n; i++) if (pens[i] == 7) assert(colours[i] == 0xFFFFFF);
+        for (i = 0; i < n; i++) if (pens[i] == 0) assert(colours[i] == 0x000000);
+    }
+    /* 16 colours (built-in renderer): all pens are the ANSI pens, nothing to add */
+    {
+        struct PrefsStruct p;
+        memset(&p, 0, sizeof p);
+        assert(Palette_OwnPens(APP_RENDERER_BUILTIN, 4, ansi));
+        assert(Palette_CursorPens(ansi, shown, pens, colours) == 0);
+    }
+}
+
 int main(void) {
     test_menu_text_is_legible_on_os2_and_os3();
     test_the_builtin_renderer_gets_its_own_ansi_pens_on_deep_screens();
@@ -233,6 +273,7 @@ int main(void) {
     test_ansi_colours_come_from_the_device_palette_in_ansi_order();
     test_ansi_pen_layout();
     test_toolbar_red_stays_on_the_terminal_red_pen();
+    test_cursor_on_a_black_cell_stays_white_at_32_colours_when_the_tool_bar_takes_free_pens();
     printf("palette: all assertions passed\n");
     return 0;
 }

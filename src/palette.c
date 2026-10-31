@@ -103,6 +103,28 @@ BOOL Palette_OwnPens(ULONG state, UWORD depth, UBYTE pens[16])
     return Palette_AnsiPens(depth, pens);
 }
 
+int Palette_CursorPens(const UBYTE ansiPens[16], const ULONG shown[16], UBYTE pens[16], ULONG colours[16])
+{
+    int i, j, n = 0;
+
+    for (i = 0; i < 16; i++)
+    {
+        UBYTE pen = (UBYTE)(ansiPens[i] ^ PALETTE_CURSOR_MASK);
+        BOOL known = FALSE;
+
+        for (j = 0; j < 16; j++)
+            known = known || ansiPens[j] == pen;
+        for (j = 0; j < n; j++)
+            known = known || pens[j] == pen;
+        if (known)
+            continue;
+        pens[n]    = pen;
+        colours[n] = shown[i] ^ 0x00FFFFFF;
+        n++;
+    }
+    return n;
+}
+
 void Palette_ScreenColours(const UWORD palette[16], const UBYTE pens[16], const ULONG ui[PALETTE_UI_SHARED],
                            ULONG out[16])
 {
