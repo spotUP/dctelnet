@@ -75,3 +75,10 @@ BOOL ScreenFont_GlyphIsHLine(const UWORD *rows, int nrows, int width)
     }
     return nfull > 0 && nfull <= nrows / 2;
 }
+
+const char *ScreenFont_ToolIconDir(BOOL modern, BOOL tallPixels)
+{
+    if (!modern)
+        return "PROGDIR:SCIcons/";
+    return tallPixels ? "PROGDIR:ToolBar/Wide/" : "PROGDIR:ToolBar/Square/";
+}

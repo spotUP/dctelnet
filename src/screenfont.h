@@ -50,6 +50,12 @@ BOOL ScreenFont_TallPixels(UWORD resolutionX, UWORD resolutionY);
  * and at most half of them (a full block is not a line). */
 BOOL ScreenFont_GlyphIsHLine(const UWORD *rows, int nrows, int width);
 
+/* The drawer (with its trailing slash) of the tool bar icons. modern: the
+ * Lucide set, in the shape of its pixels (wide for tall pixels, else square);
+ * otherwise DCTelnet 1.6's SCIcons, whatever the pixels. One choice for the
+ * own screen and the Workbench (Display > Modern Icons). */
+const char *ScreenFont_ToolIconDir(BOOL modern, BOOL tallPixels);
+
 #define TOPAZ_PRO_NAME "TopazPro.font"
 #define TOPAZ_PRO_SIZE 16
 

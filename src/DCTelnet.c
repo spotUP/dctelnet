@@ -206,6 +206,7 @@ static struct NewMenu mainMenuDesc[] =
     {    NM_ITEM, "Full-screen",                    "W", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_FULLSCREEN},
     {    NM_ITEM, "Title Bar",                      "R", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_TITLE_BAR},
     {    NM_ITEM, "Tool Bar",                       "4", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_TOOL_BAR},
+    {    NM_ITEM, "Modern Icons",                    0 , HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_MODERN_ICONS},
     {    NM_ITEM, "132 Columns",                     0 , HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_132_COLUMNS},
     {    NM_ITEM, "LEDs",                           "I", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_LEDS},
     {    NM_ITEM, "Snapshot Windows",               "$",             0,               0, (APTR)MENU_SNAPSHOT_WINDOWS},
@@ -4508,6 +4509,14 @@ static void GetWindowMsg(struct Window *wwin)
                             else
                                 CloseToolBarWindow();
                         }
+                        break;
+
+                    case MENU_MODERN_ICONS:
+                        UpdatePrefsFromMenu(item, APP_MODERN_ICONS);
+                        if (STATE_IS(APP_FULLSCREEN))
+                            shouldRestart = STATE_IS(APP_TOOL_BAR_ENABLED);
+                        else
+                            ReopenToolBarWindow();
                         break;
 
                     case MENU_RETURN_SENDING_CRLF:
