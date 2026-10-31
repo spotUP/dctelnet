@@ -56,6 +56,10 @@ BOOL ScreenFont_GlyphIsHLine(const UWORD *rows, int nrows, int width);
  * own screen and the Workbench (Display > Modern Icons). */
 const char *ScreenFont_ToolIconDir(BOOL modern, BOOL tallPixels);
 
+/* Width of one tool bar button slot: the icon, or its label when that is
+ * wider, so neighbouring labels never overlap. The icon is centred in it. */
+UWORD ScreenFont_ToolSlotWidth(UWORD imageWidth, UWORD labelChars, UWORD charWidth);
+
 #define TOPAZ_PRO_NAME "TopazPro.font"
 #define TOPAZ_PRO_SIZE 16
 

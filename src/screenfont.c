@@ -82,3 +82,9 @@ const char *ScreenFont_ToolIconDir(BOOL modern, BOOL tallPixels)
         return "PROGDIR:SCIcons/";
     return tallPixels ? "PROGDIR:ToolBar/Wide/" : "PROGDIR:ToolBar/Square/";
 }
+
+UWORD ScreenFont_ToolSlotWidth(UWORD imageWidth, UWORD labelChars, UWORD charWidth)
+{
+    UWORD labelWidth = (UWORD)(labelChars * charWidth);
+    return labelWidth > imageWidth ? labelWidth : imageWidth;
+}
