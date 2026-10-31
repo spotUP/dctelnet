@@ -2523,6 +2523,7 @@ void OpenToolBarWindow(char setmenus)
         register struct Gadget *gad = 0;
         UWORD nextleft = scr->WBorLeft + 1, maxheight = 0, i = 0;
         WORD wintop, spacing = 5;
+        UWORD slot;
 
         wintop = STATE_IS(APP_FULLSCREEN) ? 0 : winTop;
 
@@ -2546,7 +2547,9 @@ void OpenToolBarWindow(char setmenus)
                 if(gad) gad->NextGadget = &dob[i]->do_Gadget;
                 gad = &dob[i]->do_Gadget;
                 gad->NextGadget = 0;
-                gad->LeftEdge = nextleft;
+                slot = ScreenFont_ToolSlotWidth(gad->Width, strlen((char *)dob[i]->do_ToolTypes[0]),
+                                                scr->RastPort.Font->tf_XSize);
+                gad->LeftEdge = nextleft + (slot - gad->Width) / 2;   // icon centred over its label
                 gad->TopEdge = wintop + 1;
                 if(gad->SelectRender == 0)
                     gad->Flags = GFLG_GADGIMAGE | GFLG_GADGHCOMP;
@@ -2557,7 +2560,7 @@ void OpenToolBarWindow(char setmenus)
                 //gad->GadgetText = 0;
                 gad->GadgetID = i;
                 gad->UserData = (APTR)dob[i]->do_ToolTypes[0];
-                nextleft = gad->LeftEdge + gad->Width + spacing;
+                nextleft += slot + spacing;
                 if(!firstgad) firstgad = gad;
                 if(gad->Height > maxheight) maxheight = gad->Height;
             }
@@ -2577,7 +2580,7 @@ void OpenToolBarWindow(char setmenus)
             newWin.LeftEdge = prefs.ToolBarWinLeftEdge;
             newWin.TopEdge  = prefs.ToolBarWinTopEdge;
 
-            newWin.Width = gad->LeftEdge + gad->Width + scr->WBorRight + 1;
+            newWin.Width = nextleft - spacing + scr->WBorRight + 1;
             newWin.Height = maxheight + wintop + scr->WBorBottom + 3 + scr->RastPort.Font->tf_YSize;
             newWin.Flags = WFLG_NOCAREREFRESH|WFLG_NEWLOOKMENUS|WFLG_CLOSEGADGET|WFLG_DRAGBAR|WFLG_DEPTHGADGET;
             newWin.IDCMPFlags = IDCMP_CLOSEWINDOW | IDCMP_MENUPICK | IDCMP_GADGETUP;
