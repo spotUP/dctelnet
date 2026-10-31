@@ -25,6 +25,18 @@ BOOL Palette_AnsiPens(UWORD depth, UBYTE pens[16]);
  * other twelve in ANSI order. pens[ansi] is the ANSI colour's pen. */
 BOOL Palette_OwnPens(ULONG state, UWORD depth, UBYTE pens[16]);
 
+/* The terminal cursor is drawn in COMPLEMENT mode through the RastPort mask
+ * PALETTE_CURSOR_MASK (term_cursor_flip in the term engine: Mask = 0x0F), so
+ * it shows pen (cell pen XOR mask). Those pens must be the terminal's too.
+ * Palette_CursorPens lists, for the ANSI pens (Palette_OwnPens), every
+ * complement pen that is not itself an ANSI pen (at 32+ colours: pens 0-7;
+ * the complement of 20-27 is 27-20, already ANSI pens), with the colour it
+ * must have: the RGB inverse (0x00RRGGBB) of the shown[] colour of the ANSI
+ * colour it complements, so a black cell gets a white cursor. pens/colours
+ * hold up to 16 entries; returns the count. */
+#define PALETTE_CURSOR_MASK 0x0F
+int Palette_CursorPens(const UBYTE ansiPens[16], const ULONG shown[16], UBYTE pens[16], ULONG colours[16]);
+
 /* The colour each ANSI colour shows in on the screen (0x00RRGGBB, ANSI
  * order): palette[ansi] (RGB4) on pen pens[ansi] (Palette_OwnPens). On 16
  * colours the built-in renderer shares pens 0 to PALETTE_UI_SHARED-1 with the
