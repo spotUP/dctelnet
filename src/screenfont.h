@@ -66,6 +66,18 @@ UWORD ScreenFont_ToolSlotWidth(UWORD imageWidth, UWORD labelWidth);
  * when the label is the wider of the two. */
 WORD ScreenFont_LabelLeft(WORD iconLeft, UWORD iconWidth, UWORD labelWidth);
 
+/* A tool bar button's rectangle in window coordinates. */
+struct ScreenFontToolRect
+{
+    WORD  left, top;
+    UWORD width, height;
+};
+
+/* Index of the first of count rects holding the point (x, y), or -1 when it
+ * is over none (the gaps between buttons, the bar around them). Edges are
+ * inclusive on the left and top, exclusive on the right and bottom. */
+WORD ScreenFont_ToolAt(const struct ScreenFontToolRect *rects, UWORD count, WORD x, WORD y);
+
 #define TOPAZ_PRO_NAME "TopazPro.font"
 #define TOPAZ_PRO_SIZE 16
 
