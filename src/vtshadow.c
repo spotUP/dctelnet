@@ -94,6 +94,61 @@ static BOOL AutowrapOn(vt_term *t)
     return strstr(replyBuf, "?7;2$y") == NULL;     /* no answer: on, the default */
 }
 
+/* The engine's current pen (DECRQSS "m", the engine's own answer) as the SGR
+ * the rows use, so the console's pen equals the one the BBS last set. Empty
+ * when the pen is the default (the tail's reset already is that). */
+static size_t PenSgr(vt_term *t, char *out)
+{
+    static const char q[] = "\033P$qm\033\\";
+    const char *p;
+    UBYTE fg = 7, bg = 0, flags = 0;
+    int v[8], n = 0, i;
+
+    replyLen = 0;
+    replyBuf[0] = 0;
+    vt_write(t, (const vt_u8 *)q, (long)sizeof(q) - 1);
+    p = strstr(replyBuf, "$r");
+    if (!p)
+        return 0;
+    p += 2;
+    while (*p && *p != 'm')
+    {
+        int val = 0;
+
+        while (*p >= '0' && *p <= '9')
+            val = val * 10 + (*p++ - '0');
+        if (n < 8)
+            v[n++] = val;
+        if (*p == ';' || *p == ':')
+            p++;
+        else if (*p != 'm')
+            break;
+    }
+    for (i = 0; i < n; i++)
+    {
+        int c = v[i];
+
+        if (c == 1) flags |= 0x10;
+        else if (c == 4) flags |= 0x01;
+        else if (c == 5 || c == 6) flags |= 0x40;
+        else if (c == 7) flags |= 0x20;
+        else if (c >= 30 && c <= 37) fg = (UBYTE)(c - 30);
+        else if (c >= 40 && c <= 47) bg = (UBYTE)(c - 40);
+        else if (c >= 90 && c <= 97) fg = (UBYTE)(c - 90 + 8);
+        else if (c >= 100 && c <= 107) bg = (UBYTE)(c - 100 + 8);
+        else if ((c == 38 || c == 48) && i + 2 < n && v[i + 1] == 5)
+        {
+            UBYTE idx = v[i + 2] < 16 ? (UBYTE)v[i + 2] : (UBYTE)(c == 38 ? 7 : 0);
+
+            if (c == 38) fg = idx; else bg = idx;
+            i += 2;
+        }
+    }
+    if (fg == 7 && bg == 0 && flags == 0)
+        return 0;
+    return Ansi_PutSgr(((ULONG)fg << 16) | ((ULONG)bg << 8) | flags, FALSE, out);
+}
+
 long Shadow_Serialize(vt_term *t, BOOL cp437, ShadowWriteFn write, void *user)
 {
     static const char head[] = "\033[?7l\033[0m\033[H\033[J";
@@ -102,7 +157,7 @@ long Shadow_Serialize(vt_term *t, BOOL cp437, ShadowWriteFn write, void *user)
     ULONG attr = ANSI_ATTR_RESET;
     UBYTE *cells = (UBYTE *)malloc((size_t)cols * 4);
     char *buf = (char *)malloc((size_t)cols * 24 + 32);
-    char tail[40];
+    char tail[64];
     long total = 0;
 
     if (!cells || !buf)
@@ -150,6 +205,7 @@ long Shadow_Serialize(vt_term *t, BOOL cp437, ShadowWriteFn write, void *user)
             total += (long)sizeof(head) - 1;
         }
         m = sprintf(tail, "\033[0m\033[%d;%dH%s", cy + 1, cx + 1, wrap ? "\033[?7h" : "");
+        m += (int)PenSgr(t, tail + m);      /* last: the BBS's pen holds again */
         write(user, tail, m);
         total += m;
     }

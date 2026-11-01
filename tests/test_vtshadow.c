@@ -257,6 +257,37 @@ static void measure_feed_cost(void)
     vt_free(t);
 }
 
+static void test_the_replay_ends_with_the_pen_the_bbs_last_set(void)
+{
+    static struct Sink s;
+    static const char art[] = "\033[2J\033[H\033[1;33;44mTOP";
+    int k;
+
+    for (k = 0; k < 2; k++)
+    {
+        BOOL cp437 = k == 0;
+        vt_term *console;
+        UBYTE x[4];
+        int n = 0, cx, cy;
+        const vt_cell *row;
+
+        Shadow_Close();
+        s.len = 0; s.calls = 0;
+        assert(!Shadow_DisplayOpened(cp437 ? ROUTE_IBMCON : ROUTE_CONSOLE, 80, 25, SinkWrite, &s));
+        Shadow_Feed((const UBYTE *)art, (long)sizeof(art) - 1);
+        assert(Shadow_DisplayOpened(cp437 ? ROUTE_IBMCON : ROUTE_CONSOLE, 80, 25, SinkWrite, &s));
+        console = Shadow_NewTerm(80, 25, cp437);        /* the new unit, fed the replay... */
+        vt_write(console, (const vt_u8 *)s.buf, s.len);
+        vt_write(console, (const vt_u8 *)"X", 1);        /* ...then the BBS's next text */
+        vt_cursor(console, &cx, &cy);
+        row = vt_row(console, cy, &n);
+        assert(cx == 4 && n > 3);
+        Shadow_Cell(console, &row[3], cp437, x);
+        assert(x[0] == 'X' && x[1] == 3 && x[2] == 4 && (x[3] & 0x10));  /* bold yellow on blue */
+        vt_free(console);
+    }
+}
+
 int main(void)
 {
     test_the_replayed_screen_matches_cell_for_cell_ibmcon();
@@ -266,6 +297,7 @@ int main(void)
     test_switching_to_built_in_frees_the_shadow_and_replays_nothing();
     test_ibmcon_to_console_device_carries_the_screen_over();
     test_a_new_grid_size_resizes_before_the_replay();
+    test_the_replay_ends_with_the_pen_the_bbs_last_set();
     measure_feed_cost();
     printf("vtshadow: all assertions passed\n");
     return 0;
