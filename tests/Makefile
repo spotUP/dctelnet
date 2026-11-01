@@ -3,7 +3,7 @@
 CC := cc
 CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 
-TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist
+TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist test_connectaddr
 
 .PHONY: all clean check-encoding check-fonts
 all: $(TESTS) check-encoding check-fonts
@@ -95,6 +95,9 @@ test_ansimusic: test_ansimusic.c ../src/ansimusic.c ../src/ansimusic.h
 	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
 
 test_booklist: test_booklist.c ../src/booklist.c ../src/booklist.h
+	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
+
+test_connectaddr: test_connectaddr.c ../src/connectaddr.c ../src/connectaddr.h
 	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
 
 clean:
