@@ -6,7 +6,7 @@
 #define STR_(x) #x
 #define STR(x) STR_(x)
 
-#define DCTELNET_VERSION "2.0-dev"
+#define DCTELNET_VERSION "2.0-UP/X"
 const char __ver[] = "$VER: DCTelnet " DCTELNET_VERSION " (" STR(AMIGADATE) ")";
 
 #ifndef BUILD_HASH
