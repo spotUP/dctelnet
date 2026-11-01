@@ -17,7 +17,6 @@ static long replyLen;
 
 static void ShadowReply(void *user, const vt_u8 *buf, long len)
 {
-    (void)user;
     while (len-- > 0 && replyLen < (long)sizeof(replyBuf) - 1)
         replyBuf[replyLen++] = (char)*buf++;
     replyBuf[replyLen] = 0;
@@ -49,7 +48,6 @@ static UBYTE PaletteIndex(const vt_term *t, vt_color c, UBYTE def)
 {
     if (c & VT_COLOR_RGB)
         c = (vt_color)vt_rgb_to_256(VT_RGB_OF(c));
-    (void)t;
     return c < 16 ? (UBYTE)c : def;     /* default, and 256-colour beyond 16: the default */
 }
 

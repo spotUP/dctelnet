@@ -1591,7 +1591,6 @@ static void TerminalGrid(UWORD *cols, UWORD *rows)
 
 static void ShadowWrite(void *user, const char *data, long len)
 {
-    (void)user;
     ConWrite((char *)data, len);
 }
 
