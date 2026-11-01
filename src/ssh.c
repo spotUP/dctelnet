@@ -786,19 +786,26 @@ static void OnMessage(struct Ssh *s, const UBYTE *payload, ULONG len)
 
 /* ---- the socket side ---- */
 
-/* The server's version line (RFC 4253 4.2); lines before it are ignored. */
+#define NOT_SSH_SERVER "SSH: this is not an SSH server"
+
+/* The server's version line (RFC 4253 4.2); lines before it are ignored.
+ * They are UTF-8 text, so a 0x00, 0xFE or 0xFF byte (Telnet's IAC) in them
+ * means this is not an SSH server. */
 static BOOL ReadVersion(struct Ssh *s)
 {
     for (;;)
     {
         UBYTE *nl = memchr(s->rx, '\n', s->rxLen);
-        ULONG n;
+        ULONG n, i;
+        n = nl ? (ULONG)(nl - s->rx) : s->rxLen;
+        for (i = 0; i < n; i++)
+            if (!s->rx[i] || s->rx[i] == 0xFE || s->rx[i] == 0xFF)
+                { Fail(s, NOT_SSH_SERVER); return FALSE; }
         if (!nl)
         {
-            if (s->rxLen > 255) Fail(s, "SSH: this is not an SSH server");
+            if (s->rxLen > 255) Fail(s, NOT_SSH_SERVER);
             return FALSE;
         }
-        n = (ULONG)(nl - s->rx);
         if (n >= 4 && !memcmp(s->rx, "SSH-", 4))
         {
             ULONG v = n && s->rx[n - 1] == '\r' ? n - 1 : n;

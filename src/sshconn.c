@@ -192,6 +192,11 @@ static LONG Fill(void)
 {
     LONG n = recv(tcpSocket, raw, sizeof(raw), 0), at = 0;
 
+    if (n == 0 && ssh->state != SSH_STATE_OPEN && ssh->state != SSH_STATE_CLOSED)
+        LocalFmt("\r\n\x1b[0;31m%s\x1b[0m\r\n",
+                 ssh->state == SSH_STATE_VERSION
+                     ? "SSH: the server sent no SSH version line (is this a Telnet port?)"
+                     : "SSH: the server closed the connection during login");
     if (n <= 0)
         return n;
     StirTime();
