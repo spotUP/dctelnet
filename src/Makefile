@@ -101,7 +101,7 @@ ifeq ($(OS),Windows_NT)
 	MKDIR := function mdps{ foreach ($$f in $$args){$$null = mkdir -Force -Path  $$f} } ; mdps
 #   PODMAN_USERNS=keep-id needed when podman is used instead of docker:
 	DOCKER := wsl -- env PODMAN_USERNS=keep-id  docker
-	STAT   := wsl stat
+	STAT_OWNER := wsl stat --format '%u:%g'
 	NULL   := $$null
 	AMIGADATE = $(shell Get-Date -Format 'd.M.yyyy')
 else
@@ -109,7 +109,8 @@ else
 	TOUCH:=touch
 	MKDIR := mkdir -p
 	DOCKER := env PODMAN_USERNS=keep-id  docker
-	STAT   := stat
+# BSD stat (macOS) has no --format; it takes -f with the same codes.
+	STAT_OWNER := $(if $(filter Darwin,$(shell uname -s)),stat -f '%u:%g',stat --format '%u:%g')
 	NULL   := /dev/null
 	AMIGADATE = $(shell date +"%-d.%-m.%Y")
 endif
@@ -205,7 +206,7 @@ build: $(TARGET_EXE)
 
 
 # Setting properly the user avoids git warnings about safe.directory:
-DOCKER_USER := $(shell $(STAT) --format '%u:%g'  Makefile)
+DOCKER_USER := $(shell $(STAT_OWNER) Makefile)
 
 # Recursive assignment with "=" so target-specific INTERACTIVE is expanded when the recipe runs:
 DOCKER_RUN = $(DOCKER) run $(INTERACTIVE) --user $(DOCKER_USER) -q --rm --volume "./..:/opt/code" --workdir /opt/code/src "$(BUILDER_IMAGE)"
