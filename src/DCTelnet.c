@@ -91,6 +91,7 @@ extern struct Library *CyberGfxBase;
 #include "nearest_pen.h"
 #include "prefs.h"
 #include "renderer.h"
+#include "vtshadow.h"
 #include "prefs_file.h"
 #include "palette.h"
 
@@ -432,6 +433,8 @@ static void ConWrite(char *data, long len)
 {
     enum RendererRoute route = Renderer_Route(prefs.State);
 
+    if (route != ROUTE_BUILTIN)
+        Shadow_Feed((const UBYTE *)data, len);  // the console renderers' screen, kept over a reopen (vtshadow.h)
     SelectionHide();                // the text may land on it
     if (route != ROUTE_NONE)
     {
@@ -1584,6 +1587,23 @@ static void TerminalGrid(UWORD *cols, UWORD *rows)
     ScreenFont_Grid(win->Width, win->Height, win->GZZWidth, win->GZZHeight,
                     (win->Flags & WFLG_GIMMEZEROZERO) != 0,
                     cell->tf_XSize, cell->tf_YSize, cols, rows);
+}
+
+static void ShadowWrite(void *user, const char *data, long len)
+{
+    (void)user;
+    ConWrite((char *)data, len);
+}
+
+/* A display or console unit (re)opened: hand the renderer and the grid to the
+ * shadow (vtshadow.h). console.device / ibmcon.device get their screen back;
+ * Built-in and XEM free it. */
+static void ShadowRestore(void)
+{
+    UWORD cols, rows;
+
+    TerminalGrid(&cols, &rows);
+    Shadow_DisplayOpened(Renderer_Route(prefs.State), cols, rows, ShadowWrite, NULL);
 }
 
 // The columns BBS art is drawn for in this font: 40 in the C64 fonts, 132
@@ -3162,6 +3182,7 @@ clean_exit:
     CaptureStop();                  // the capture file is complete
     CloseDisplay(TRUE);
     VtClose();                      // the built-in terminal outlives display reopens, not the program
+    Shadow_Close();                 // so does the console renderers' shadow screen
 
     ClearScrollBack();
     FreeMem(scrollbackList, sizeof(struct List));
@@ -5539,6 +5560,7 @@ static void ReopenTerminal(void)
     }
     if (displayIsPetscii)
         ConWrite(PETSCII_CONSOLE_SETUP, sizeof(PETSCII_CONSOLE_SETUP) - 1);
+    ShadowRestore();                // the new unit is empty: the text comes back
     // The grid changed with the font: tell the BBS (on the Workbench the
     // window's resize does it too, on the own screen nothing else would).
     if (isConnected)
@@ -6182,6 +6204,7 @@ BOOL OpenDisplay(void)
     /* After isAppIconified is cleared: ConWrite() drops writes while it is set. */
     if (isConDeviceOpened && displayIsPetscii)
         ConWrite(PETSCII_CONSOLE_SETUP, sizeof(PETSCII_CONSOLE_SETUP) - 1);
+    ShadowRestore();                // a console renderer's new unit is empty: the text comes back
 
     LEDs();
 
