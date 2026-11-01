@@ -11,8 +11,8 @@ STACK_MAX := 400
 STACKCHK := $(shell $(CC) -Werror -Wstack-usage=$(STACK_MAX) -c -x c /dev/null -o /dev/null 2>/dev/null && echo -Wstack-usage=$(STACK_MAX))
 
 TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_glyphraster test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_renderer test_iconpens test_vtpersonality test_vtpens test_vtinput test_nearest_pen
-.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal
-all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal
+.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu
+all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -71,6 +71,17 @@ check-ssh-terminal:
 		|| ! LC_ALL=C grep --text --after-context=12 'SshConn_Start(' DCTelnet.c | LC_ALL=C grep --text --quiet 'SetLocalEchoBack(FALSE)' \
 		|| ! LC_ALL=C grep --text --after-context=6 'static void OutKey' DCTelnet.c | LC_ALL=C grep --text --quiet 'Vt_BackspaceByte'; then \
 		echo "ERROR: DCTelnet.c must pass Vt_SshTermName to SshConn_Start, call SetLocalEchoBack(FALSE) after it, and use Vt_BackspaceByte in OutKey."; \
+		exit 1; \
+	fi
+
+# SetLocalEchoBack() runs on SSH connect and telnet ECHO negotiation, while
+# the tool bar, packet and scrollback windows may share the main menu strip.
+# It must update the menu through SyncMenuChecks(), which clears and resets
+# the strip on every window that holds it, never through the main window alone.
+check-local-echo-menu:
+	@cd ../src && if LC_ALL=C grep --text --after-context=12 '^static void SetLocalEchoBack(BOOL wantedState)$$' DCTelnet.c | LC_ALL=C grep --text --quiet 'MenuStrip(win' \
+		|| ! LC_ALL=C grep --text --after-context=12 '^static void SetLocalEchoBack(BOOL wantedState)$$' DCTelnet.c | LC_ALL=C grep --text --quiet 'SyncMenuChecks()'; then \
+		echo "ERROR: SetLocalEchoBack must update the menu through SyncMenuChecks(), not ClearMenuStrip/ResetMenuStrip on the main window."; \
 		exit 1; \
 	fi
 
