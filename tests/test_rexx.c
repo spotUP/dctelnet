@@ -65,6 +65,21 @@ static void test_waitfor_amiga_csi(void)
     assert(feed(&w, "o\x9b" "31mk"));
 }
 
+/* A connect in progress must not leave a script's GETSTATUS unanswered (it
+ * hung for minutes on a host that never answers); DISCONNECT and QUIT stop
+ * the connect; the commands that need its result wait for it. */
+static void test_commands_while_connecting(void)
+{
+    assert(RexxCmd_WhileConnecting(REXX_GETSTATUS) == REXX_RUN_NOW);
+    assert(RexxCmd_WhileConnecting(REXX_CAPTURE) == REXX_RUN_NOW);
+    assert(RexxCmd_WhileConnecting(REXX_DISCONNECT) == REXX_STOP_AND_HOLD);
+    assert(RexxCmd_WhileConnecting(REXX_QUIT) == REXX_STOP_AND_HOLD);
+    assert(RexxCmd_WhileConnecting(REXX_CONNECT) == REXX_HOLD);
+    assert(RexxCmd_WhileConnecting(REXX_SEND) == REXX_HOLD);
+    assert(RexxCmd_WhileConnecting(REXX_SENDLN) == REXX_HOLD);
+    assert(RexxCmd_WhileConnecting(REXX_WAITFOR) == REXX_HOLD);
+}
+
 int main(void)
 {
     test_parses_commands();
@@ -72,6 +87,7 @@ int main(void)
     test_waitfor_across_pieces_and_colours();
     test_waitfor_overlapping_start();
     test_waitfor_amiga_csi();
+    test_commands_while_connecting();
     printf("rexx: all assertions passed\n");
     return 0;
 }
