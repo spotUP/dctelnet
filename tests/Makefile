@@ -11,8 +11,8 @@ STACK_MAX := 400
 STACKCHK := $(shell $(CC) -Werror -Wstack-usage=$(STACK_MAX) -c -x c /dev/null -o /dev/null 2>/dev/null && echo -Wstack-usage=$(STACK_MAX))
 
 TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_glyphraster test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_renderer test_iconpens test_vtpersonality test_vtpens test_vtinput test_nearest_pen
-.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap
-all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap
+.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic
+all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -197,6 +197,14 @@ test_rlogin: test_rlogin.c ../src/rlogin.c ../src/rlogin.h
 test_ansimusic: test_ansimusic.c ../src/ansimusic.c ../src/ansimusic.h
 	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
 
+ansimusic_dump: ansimusic_dump.c ../src/ansimusic.c ../src/ansimusic.h
+	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
+
+# The ANSI music vectors shared with DEViLBOX and UP-Term, made by
+# tools/ansimusic_reference.py.
+check-ansimusic: ansimusic_dump
+	python3 ../tools/check_ansimusic_vectors.py ./ansimusic_dump ansimusic-vectors.json
+
 test_booklist: test_booklist.c ../src/booklist.c ../src/booklist.h
 	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
 
@@ -207,7 +215,7 @@ test_nearest_pen: test_nearest_pen.c ../src/nearest_pen.c ../src/nearest_pen.h .
 	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
 
 clean:
-	rm -f $(TESTS)
+	rm -f $(TESTS) ansimusic_dump
 
 CRYPTO_SRC := ../src/crypto/sha256.c ../src/crypto/aes.c ../src/crypto/bignum.c ../src/crypto/rsa.c ../src/crypto/x25519.c ../src/crypto/random.c
 test_crypto: test_crypto.c crypto_vectors.h bignum_vectors.h $(CRYPTO_SRC) $(wildcard ../src/crypto/*.h)
