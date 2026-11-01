@@ -4050,6 +4050,7 @@ static void TerminalMouseReport(void)
 {
     if (win)
         ReportMouse((BOOL)(VtReportMouseWanted(selDragging) || ToolBarWantsHover()), win);
+    VtSyncMouseIdcmp();     // the built-in renderer drops IDCMP_MOUSEMOVE otherwise
 }
 
 static void SelectionDown(WORD mx, WORD my)

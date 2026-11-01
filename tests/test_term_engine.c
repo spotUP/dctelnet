@@ -188,6 +188,9 @@ static BOOL selDragging, reportMouse;
 static int reportCalls;
 static void ReportMouse(BOOL on, struct Window *w) { (void)w; reportMouse = on; reportCalls++; }
 static void TerminalMouseReport(void);
+/* guis.c's side: TRUE while the Modern tool bar is open (its hover). */
+static BOOL toolBarHover;
+static BOOL ToolBarWantsHover(void) { return toolBarHover; }
 /* The built-in renderer reads the user's preferences. */
 struct PrefsStruct prefs;
 
@@ -1304,6 +1307,25 @@ static void test_any_motion_mode_turns_report_mouse_on_without_a_drag(void)
     VtClose();
 }
 
+/* The Modern bar lights the button under the pointer from the terminal's
+ * moves (the terminal keeps the focus): the built-in renderer must not drop
+ * IDCMP_MOUSEMOVE while the bar is open, mouse mode or not. */
+static void test_modern_tool_bar_hover_keeps_the_mouse_move_flag(void)
+{
+    xterm_begin();
+    ma3_reset_sentinels();
+    window.IDCMPFlags = IDCMP_RAWKEY | IDCMP_MOUSEMOVE;
+    toolBarHover = TRUE;
+    VtOpen();
+    assert(window.IDCMPFlags & IDCMP_MOUSEMOVE);
+    vt_put("\x1b[?1003h\x1b[?1003l");                                    /* a mode ending keeps it */
+    assert(window.IDCMPFlags & IDCMP_MOUSEMOVE);
+    toolBarHover = FALSE;                                                 /* the bar closed */
+    VtSyncMouseIdcmp();
+    assert(!(window.IDCMPFlags & IDCMP_MOUSEMOVE));
+    VtClose();
+}
+
 /* --- MA4: engine scrollback for the built-in renderer --- */
 
 #define SB_ART_ROWS 200
@@ -1611,6 +1633,7 @@ int main(void)
     test_ma3_4_5_mouse_press_release_bytes_and_selection_fallthrough();
     test_ma3_6_motion_modes_and_the_mouse_move_flag();
     test_any_motion_mode_turns_report_mouse_on_without_a_drag();
+    test_modern_tool_bar_hover_keeps_the_mouse_move_flag();
     test_ma4_2_long_art_fills_the_engine_scrollback_and_only_when_asked();
     test_a_scrollback_size_change_keeps_the_screen_and_the_newest_lines();
     test_ma4_3_shift_page_up_draws_the_previous_page_and_page_down_returns();
