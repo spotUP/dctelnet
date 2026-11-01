@@ -10,7 +10,7 @@ CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 STACK_MAX := 400
 STACKCHK := $(shell $(CC) -Werror -Wstack-usage=$(STACK_MAX) -c -x c /dev/null -o /dev/null 2>/dev/null && echo -Wstack-usage=$(STACK_MAX))
 
-TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_renderer test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_connectaddr test_typed_send test_iconpens test_nearest_pen test_vtpersonality test_petscii_font test_vtshadow
+TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_renderer test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_connectaddr test_typed_send test_iconpens test_nearest_pen test_vtpersonality test_petscii_font test_vtshadow test_glyphraster test_vtpens test_vtinput
 
 # The test programs are host executables, but make only compares
 # timestamps. Docker "make ci" (Linux) and "make host-ci" (macOS) share this
@@ -21,7 +21,7 @@ ifneq ($(HOST_ID),$(shell cat .host-id 2>/dev/null))
 $(shell rm -f $(TESTS) ansimusic_dump; echo '$(HOST_ID)' > .host-id)
 endif
 
-.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-petscii-font-builtin check-label-gap check-font-cancel check-welcome-kept-text
+.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-petscii-font-builtin check-label-gap check-font-cancel check-welcome-kept-text check-build-hash
 all: $(TESTS) check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-label-gap check-font-cancel check-welcome-kept-text
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
@@ -69,6 +69,16 @@ check-currenttime-null:
 # checked call "overflows": the check moves SP onto the main task's stack and
 # calls exit() from the wrong process, and the machine resets (debug build,
 # `DCTelnet <host> <port>`, rig 3, 2026-10-30).
+# The version string carries BUILD_HASH and AMIGADATE (src/DCTelnet.c). DCTelnet.o must be
+# recompiled when either changes, or a rebuild after a commit ships the previous hash.
+check-build-hash:
+	@T=$$(mktemp -d) && trap 'rm -rf "$$T"' EXIT && \
+	touch "$$T/buildinfo-aaa-d.stamp" "$$T/DCTelnet.o" && \
+	if $(MAKE) --no-print-directory -n -C ../src CPU=68000 OBJDIR="$$T" BUILD_HASH=aaa AMIGADATE=d "$$T/DCTelnet.o" | grep -q -- '-c DCTelnet.c'; then \
+		echo "ERROR: src/Makefile recompiles DCTelnet.o with an unchanged build hash."; exit 1; fi && \
+	if ! $(MAKE) --no-print-directory -n -C ../src CPU=68000 OBJDIR="$$T" BUILD_HASH=bbb AMIGADATE=d "$$T/DCTelnet.o" | grep -q -- '-c DCTelnet.c'; then \
+		echo "ERROR: src/Makefile does not recompile DCTelnet.o when BUILD_HASH changes (stale version string)."; exit 1; fi
+
 check-debug-stack:
 	@cd ../src && if LC_ALL=C grep --quiet --text 'CreateNewProc' *.c \
 		&& LC_ALL=C grep --text 'DEBUG_CFLAGS' Makefile | LC_ALL=C grep --quiet -- '[[:space:]]-stack-check'; then \
