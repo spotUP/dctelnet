@@ -341,15 +341,16 @@ static void VtTitleRestore(void)
 /* MA3-4..6: the mouse as the program on the far side asked for it. */
 static struct VtMouse vtMouse;
 
-/* IDCMP_MOUSEMOVE only while ?1002 or ?1003 is on (the built-in renderer has
- * no selection to drag). */
+/* IDCMP_MOUSEMOVE while ?1002 or ?1003 is on, and while the Modern tool bar
+ * is open: the terminal keeps the focus, and its moves light the bar's
+ * buttons (ToolBarHover). The built-in renderer has no selection to drag. */
 static void VtSyncMouseIdcmp(void)
 {
     ULONG want;
 
     if (!win || !vtTerm)
         return;
-    want = Vt_IdcmpFor(win->IDCMPFlags, IDCMP_MOUSEMOVE, vtTerm, FALSE);
+    want = Vt_IdcmpFor(win->IDCMPFlags, IDCMP_MOUSEMOVE, vtTerm, ToolBarWantsHover());
     if (want != win->IDCMPFlags)
         ModifyIDCMP(win, want);
 }
