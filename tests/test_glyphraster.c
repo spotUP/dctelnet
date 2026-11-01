@@ -71,11 +71,27 @@ static void test_diagonal(void)
         assert(r[y] == (UWORD)(0x8000U >> y));
 }
 
+/* Shell prompts over SSH: oh-my-zsh draws U+279C, pure and starship U+276F.
+ * Both showed as '?' before they had a Latin-1 stand-in. */
+static void test_prompt_arrows_show_as_greater_than(void)
+{
+    vt_glyph g = vt_map_glyph(0x279C, VT_ENC_LATIN1);
+
+    assert(g.kind == VT_GLYPH_FONT && g.code == '>');
+    g = vt_map_glyph(0x276F, VT_ENC_LATIN1);
+    assert(g.kind == VT_GLYPH_FONT && g.code == '>');
+    g = vt_map_glyph(0x279C, VT_ENC_CP437);
+    assert(g.kind == VT_GLYPH_FONT && g.code == '>');
+    g = vt_map_glyph(0x2799, VT_ENC_LATIN1);    /* no stand-in: still '?' */
+    assert(g.kind == VT_GLYPH_FONT && g.code == '?');
+}
+
 int main(void)
 {
     test_box_lines();
     test_blocks_and_shades();
     test_diagonal();
+    test_prompt_arrows_show_as_greater_than();
     printf("glyphraster: all assertions passed\n");
     return 0;
 }
