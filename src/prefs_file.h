@@ -80,4 +80,11 @@ UWORD *Prefs_Palette(struct PrefsStruct *p);
  */
 ULONG Prefs_FirstRunState(ULONG rendererBits);
 
+/*
+ * The defaults of a first run (no prefs file, or an invalid State in it):
+ * the State from Prefs_FirstRunState(rendererBits) and Terminal > ANSI
+ * Music on. Fields whose default is 0 are left as they are.
+ */
+void Prefs_ApplyFirstRun(struct PrefsStruct *p, ULONG rendererBits);
+
 #endif /* PREFS_FILE_H */
