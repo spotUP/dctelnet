@@ -1,9 +1,9 @@
 @DATABASE "DCTelnet.guide"
-@$VER: DCTelnet.guide 2.0-dev (xx.x.20yy)
+@$VER: DCTelnet.guide 2.0-UP/X (xx.x.20yy)
 @node "MAIN" "DCTelnet Guide"
 @author "Shane, Zed and Bruno FREDERIC"
 @TOC "MAIN"
-                              @{b}DCTelnet v2.0-dev@{ub}
+                              @{b}DCTelnet v2.0-UP/X@{ub}
      ______  ______ ____________________    __    ___________________
     /\\_____\\/\\_____\\\\_________\\______\\__\\  /\\_\\  /\\__\\______\\_________\\
    / /  ___ \\/  ___//___   ___/  ____/  / / /  \\/ /  /  ____/___   ___/
@@ -23,6 +23,10 @@
  @{"     History     " LINK HISTORY} Changes in this update and previous versions
  @{"     Credits     " LINK CREDITS} Credits
  @{"     License     " LINK LICENSE} License
+
+ 2.0-UP/X is an unofficial release. The Terminal and Display menus, with
+ the Renderer choice, are described in:
+ @{"  Terminal and Display  " LINK TERMDISPLAY} The Terminal and Display menus
 @EndNode
 
 
@@ -48,7 +52,7 @@ Workbench@{ub}.
 
 - @{b}ZModem@{ub} upload and download using XPR libraries
 
-- @{b}SSH@{ub}, Rlogin and telnet connections
+- @{b}SSH@{ub} (through ssh.library), Rlogin and telnet connections
 
 - Fast and efficient design : DCTelnet access the TCP/IP stack directly
 
@@ -65,6 +69,15 @@ Workbench@{ub}.
   16 ANSI colours on pens of their own
 
 - @{b}Terminal Type PETSCII@{ub} for Commodore 64 BBSes, with C64 fonts
+
+- A @{b}Built-in renderer@{ub}: UTF-8 text, 256-colour and RGB text colours,
+  a scrollback of its own with Shift+Page Up/Down and the mouse wheel,
+  mouse reports and bracketed paste for programs on Unix hosts, and
+  window titles set by the host
+
+- @{b}ANSI music@{ub} (as GW-BASIC PLAY and SyncTERM) and iCE Colours
+
+- Tool bar with Workbench icons, or the @{b}Modern Icons@{ub} set
 
 - @{b}Per-BBS settings@{ub}: each Address Book entry can have its own font,
   palette, terminal, keyboard and transfer settings, a comment and a
@@ -128,6 +141,12 @@ and Fonts drawers. When ibmcon.device or a library is in both its own
 drawer and DEVS: or LIBS:, DCTelnet opens the newer version. The start-up
 screen tells which ibmcon.device it uses and where it came from.
 
+SSH connections need @{b}ssh.library@{ub} in LIBS:. The Installer copies the
+build that matches your CPU (68000, 68020, 68040 or 68060) to LIBS:; when
+installing by hand, copy one of the Libs/ssh.library.000, .020, .040 or
+.060 files to LIBS:ssh.library. Without it, choosing SSH shows
+"SSH needs LIBS:ssh.library". Telnet and Rlogin do not need it.
+
 DCTelnet needs @{b}ibmcon.device 1.11@{ub} or later (included) for all of its
 features. Fonts in the package:
 - Petscii and PetsciiLower: the Commodore 64 upper-case and lower-case
@@ -157,6 +176,7 @@ Pressing the right mouse button you will see.
  @{"    Options   " LINK OPTIONS} Options menu.
  @{"   Settings   " LINK PREFS} Preferences menu options.
  @{"     Login    " LINK LOGIN} Login menu options.
+ @{"Terminal/Display" LINK TERMDISPLAY} 2.0-UP/X Terminal and Display menus.
  @{"     ARexx    " LINK AREXX} Controlling DCTelnet from ARexx scripts.
 
   Click on the above for more help on a option which falls under that
@@ -512,10 +532,17 @@ NOTE:  If you enable this option while connected to a telnet site, you
                        IBM font (IBM, P0T-IBM, ANSEY, HyperANSI).
   Amiga (ISO-8859-1) - Amiga BBSes. Copied text keeps its accented
                        letters.
-  UTF-8              - modern BBSes and Unix hosts that send UTF-8. The
-                       text is shown in the IBM character set (box drawing
-                       exact); accented letters you type or paste are sent
-                       as UTF-8.
+  UTF-8              - modern BBSes and Unix hosts that send UTF-8.
+                       Accented letters you type or paste are sent as
+                       UTF-8. The Built-in renderer shows the text in the
+                       font's own encoding: with an IBM font box drawing
+                       and block characters are drawn as in CP437, with
+                       an Amiga (Latin-1) font accents are exact and
+                       box drawing and blocks are drawn by DCTelnet. The
+                       other renderers show UTF-8 in the IBM character
+                       set. UTF-8 sent by the host is also recognised in
+                       the stream; Terminal Type Automatic then acts as
+                       Unix.
 
   Also "Characters" in the Terminal group of an Address Book entry's
 Settings...
@@ -529,6 +556,13 @@ a short Sound, or nothing (Off).
                                  ~~~~~~~~~~
   Plays the tunes some BBSes send (ANSI music, as SyncTERM plays it)
 instead of showing them as garbage. Off by default.
+
+  The tunes are the BASIC PLAY language after ESC[M, ESC[N or ESC[|, ended
+by Ctrl-N, played by the rules of GW-BASIC PLAY and SyncTERM (the same
+rules UP-Term and DEViLBOX use): tempo T, length L, octave O, notes A-G
+with sharp, flat and dots, N, P, and the styles MN, ML and MS. Out-of-range
+numbers are clamped. ESC[2M still deletes two lines. SMILE sound effects
+are skipped.
 
                                  @{b}@{u} Rlogin @{ub}@{uu}
                                   ~~~~~~
@@ -544,6 +578,18 @@ Book entry's Username as the user name and its Password as the password
   Connects with SSH (usually port 22; set the entry's port) instead of
 telnet: everything sent both ways is encrypted, the password too. Also in
 the Terminal group of an Address Book entry's Settings...
+
+  SSH needs LIBS:ssh.library (see INSTALL). The host is told the terminal
+name "xterm" when the Built-in renderer shows a Unix terminal (Terminal
+Type Unix, or Automatic with UTF-8) and "ansi" otherwise (PETSCII: "PETSCII").
+The host echoes what you type, so Local Echo is switched off for the
+connection. With the xterm terminal the Backspace key sends DEL (the BS/DEL
+swap still inverts it); with the ansi terminal it sends BS.
+
+  If the port is not an SSH server DCTelnet says so in red in the
+terminal: "this is not an SSH server", or "the server sent no SSH version
+line (is this a Telnet port?)" when the server only closes the connection.
+Try telnet on that port.
 
   The user name and password come from the Address Book entry; without
 them DCTelnet asks when the login starts (the password field shows stars).
@@ -842,16 +888,105 @@ Starting with v1.8, a compatible version of the library is included in the
 
 
 
+@node TERMDISPLAY "DCTelnet, Terminal and Display menus"
+
+                      @{b}@{u} Terminal and Display menus @{ub}@{uu}
+
+  DCTelnet 2.0-UP/X has a Terminal menu and a Display menu. The older
+Options and Settings nodes describe the same items under their 1.x names.
+
+@{b}Terminal menu@{ub}
+
+  Telnet terminal type..   Name sent to a telnet server. Default VT102.
+  Raw Connection, Rlogin, SSH   Connection type (SSH needs ssh.library).
+  Character Set            IBM PC (CP437), Amiga (ISO-8859-1) or UTF-8.
+  Terminal Type            Automatic, BBS, Unix or PETSCII.
+  Bell                     Flash, Sound or Off.
+  ANSI Music               Play ANSI music (GW-BASIC PLAY rules). Off by
+                           default.
+  iCE Colours              On (default): the blink attribute makes the
+                           background bright. Off: blink is ignored and
+                           the cell is drawn as the host sent it. The
+                           Built-in renderer follows this item; it is
+                           not checked for the other renderers.
+  Local Echo, Swap BackSpace & Del keys, Return key send CR+LF, VT Keys
+  Packet Window
+  Scrollback History      (key E) Switch the scrollback on or off. With
+                           the Built-in renderer this restarts the
+                           built-in terminal.
+  ScrollBack Lines..      (key 0) Default 300, from 10 to 32000.
+  Function Keys..
+
+  @{b}Terminal Type@{ub}
+    Automatic  UTF-8 character set acts as Unix, any other as BBS.
+    BBS        PC ANSI terminal, whatever the Character Set. A UTF-8
+               host forced to BBS is converted to CP437.
+    Unix       xterm terminal.
+    PETSCII    Commodore 64 screen, fonts and keys. The terminal name
+               sent is always "PETSCII".
+
+  @{b}PETSCII keys@{ub}
+    Typed a-z sends the PETSCII codes $41-$5A and typed A-Z sends
+    $C1-$DA, as a C64 keyboard does. Ctrl+1 to Ctrl+8 select the first
+    eight C64 colours (black, white, red, cyan, purple, green, blue,
+    yellow); Ctrl+9 is RVS ON and Ctrl+0 is RVS OFF. Left-Amiga (the
+    Commodore key) with 1 to 8 selects the other eight colours; Ctrl
+    wins over Left-Amiga. The codes $0E and $8E switch the character set
+    of the whole screen at once.
+
+@{b}Display menu@{ub}
+
+  Renderer            Built-in (experimental) (key 1), AmigaOS
+                      console.device, External XEM Library (key 3) or
+                      Zed's ibmcon.device. On the first run a 68020 or
+                      better CPU gets Built-in; a 68000 or 68010 gets
+                      ibmcon.device.
+  Fast Scroll (ibmcon.device), XEM Library path.., XEM Lib Options..
+  Screen Mode.., Screen Font.., Screen Palette..
+  Full-screen, Title Bar, Tool Bar, 132 Columns, LEDs, Snapshot Windows
+  Modern Icons        Tool bar of 20 pixel line symbols, grey on black
+                      and white when selected, without panel or labels.
+                      They brighten under the pointer while the terminal
+                      has focus. The terminal starts straight under the
+                      tool bar. Off: the SCIcons or ToolBar icons.
+
+  @{b}Built-in renderer@{ub}
+    - Uses 8x8 cells; the screen is at least 640 pixels wide and has 4
+      to 32 bit planes or bits of depth.
+    - Draws 256-colour and RGB text in its own colours on RTG and
+      true-colour screens, and a solid cursor block.
+    - Shows UTF-8 in the encoding of the font (IBM or Latin-1); box
+      drawing and block characters are drawn.
+    - Reports the mouse to programs that ask for it (modes 1002 and
+      1003), and supports bracketed paste. The mouse wheel (NewMouse)
+      scrolls 3 lines of the scrollback unless a program owns the mouse;
+      hold Shift to scroll anyway. Shift+Page Up and Shift+Page Down
+      scroll one page; plain Page Up goes to the host.
+    - Shows the window title that the host sets (OSC 0 and 2) in the title
+      bar of the screen or window.
+    - Never draws over other windows on its screen.
+    - Uses the Workbench pens for dialogs on its 16-colour screen.
+
+@EndNode
+
 @node HISTORY "DCTelnet, History"
 
                                  @{b}@{u} History @{ub}@{uu}
                                  ~~~~~~~~~
 
----[ DCTelnet 2.0 ]-------------------------------------------------------
-
-TODO
+---[ DCTelnet 2.0-UP/X (unofficial) ]-------------------------------------
 
 New Features:
+- Built-in renderer (Display > Renderer), default on 68020 and better:
+  UTF-8, xterm, 256-colour and RGB text, mouse reports, bracketed paste,
+  window titles, scrollback with Shift+Page Up/Down and the mouse wheel
+- SSH runs on ssh.library; the Installer copies the build for your CPU to
+  LIBS:. The host gets the terminal name xterm or ansi instead of VT102.
+- Terminal Type (Automatic, BBS, Unix, PETSCII) and iCE Colours
+- ANSI music follows the GW-BASIC PLAY rules of SyncTERM
+- PETSCII keys: capitals, Ctrl and Commodore colour keys
+- Modern Icons tool bar (Display menu)
+- Menu check marks and local echo follow the session
 - PETSCII Mode for Commodore 64 BBSes, with the Petscii and PetsciiLower
   fonts (Terminal menu)
 - Per-BBS settings: each Address Book entry can override four groups of

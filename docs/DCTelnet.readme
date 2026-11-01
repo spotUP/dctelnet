@@ -2,7 +2,7 @@ Short:        DCTelnet - Telnet/BBS client with Zmodem
 Author:       Bruno FREDERIC
 Uploader:     bruno.frederic+aminet@gm...
 Type:         comm/tcp
-Version:      2.0-dev
+Version:      2.0-UP/X
 Architecture: m68k-amigaos >= 2.0
 Distribution: Aminet
 
@@ -39,9 +39,9 @@ https://eab.abime.net/showthread.php?t=121939
 
 ---
 
-v2.0 Changelog
+v2.0-UP/X (unofficial release) Changelog
 
-TODO
+See the History node of DCTelnet.guide for the list of changes.
 
 ---
 
@@ -58,6 +58,13 @@ TODO
 - multiple simultaneous Telnet connections
 - No MUI, ClassAct or ReAction required
 - No telser.device required
+- Built-in terminal renderer (default on 68020 and better): UTF-8, xterm,
+  256-colour and RGB text, mouse reports, bracketed paste, window titles
+  and scrollback; the older renderers stay available (Display > Renderer)
+- SSH (through ssh.library) and Rlogin connections
+- PETSCII mode for Commodore 64 BBSes, ANSI music, iCE Colours
+- Per-BBS settings, palette editor, RTG screen modes, ARexx port
+- Modern Icons tool bar
 
 ---
 
@@ -90,6 +97,8 @@ case, copy the required files to their respective system directories:
 
 - DCTelnet/Devs/ibmcon.device -> DEVS:
 - Libraries from DCTelnet/Libs -> LIBS:
+- DCTelnet/Libs/ssh.library.000, .020, .040 or .060 (match your CPU), copied
+  as LIBS:ssh.library, for SSH connections
 - Fonts from DCTelnet/Fonts -> FONTS:
 
 On AmigaOS / Kickstart 2.00 & 2.02, the default versions of

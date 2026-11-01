@@ -54,6 +54,13 @@ or join the discussion on the [EAB forum thread](https://eab.abime.net/showthrea
 - **multiple simultaneous** Telnet connections
 - **No** MUI, ClassAct or ReAction required
 - **No** `telser.device` required
+- **2.0-UP/X** (unofficial release): Built-in terminal renderer (default on 68020 and better): UTF-8, xterm,
+  256-colour and RGB text, mouse reports, bracketed paste, window titles
+  and scrollback; the older renderers stay available (Display > Renderer)
+- SSH (through ssh.library) and Rlogin connections
+- PETSCII mode for Commodore 64 BBSes, ANSI music, iCE Colours
+- Per-BBS settings, palette editor, RTG screen modes, ARexx port
+- Modern Icons tool bar
 
 ---
 
