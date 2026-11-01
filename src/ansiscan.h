@@ -25,6 +25,10 @@ long Ansi_FindText(const char *hay, size_t len, const char *needle);
 #define ANSI_ATTR_RESET 0xFFFFFFFFUL
 size_t Ansi_ScreenRow(const UBYTE *cells, UWORD cols, BOOL swap17, ULONG *attr, char *out);
 
+/* The SGR sequence ScreenRow writes for one cell attribute a (fg << 16 |
+ * bg << 8 | flags, the cell layout above); returns the length (max 16). */
+size_t Ansi_PutSgr(ULONG a, BOOL swap17, char *out);
+
 /* Removes every byte b from data[0..*len) in place; returns how many went
  * (BEL, when the Bell is a sound or off: the console would flash). */
 size_t Ansi_StripByte(UBYTE *data, size_t *len, UBYTE b);

@@ -42,7 +42,7 @@ static UBYTE ansi_pen(UBYTE pen, BOOL swap17)
     return base;
 }
 
-static size_t put_sgr(ULONG a, BOOL swap17, char *out)
+size_t Ansi_PutSgr(ULONG a, BOOL swap17, char *out)
 {
     UBYTE fg = (UBYTE)(a >> 16), bg = (UBYTE)(a >> 8), flags = (UBYTE)a;
     size_t n = 0;
@@ -77,7 +77,7 @@ size_t Ansi_ScreenRow(const UBYTE *cells, UWORD cols, BOOL swap17, ULONG *attr, 
 
         if (a != *attr)
         {
-            n += put_sgr(a, swap17, out + n);
+            n += Ansi_PutSgr(a, swap17, out + n);
             *attr = a;
         }
         out[n++] = (char)cell[0];
