@@ -1,0 +1,39 @@
+DCTelnet 2.0-UP/X (unofficial release, 1.11.2026)
+
+An unofficial update of DCTelnet, the Telnet and BBS client for the Amiga,
+based on upstream DCTelnet 2.0-dev by Bruno Frederic. It is not an official
+release of the upstream project.
+
+Highlights
+
+- New built-in terminal renderer (default on 68020 and better): UTF-8,
+  xterm, 256 colours, 24-bit RGB, mouse reports, bracketed paste, window
+  titles and scrollback. The older renderers stay in Display > Renderer.
+- SSH connections through the new ssh.library, plus Rlogin.
+- PETSCII mode for Commodore 64 BBSes, with C64 fonts included.
+- ANSI music, with Bell as Flash, Sound or Off.
+- Per-BBS settings in the Address Book, SyncTERM phone book import,
+  redial, keep alive and connect timeout.
+- Select, copy and paste with the mouse; capture to file; save the screen
+  as ANSI; find text in the scrollback.
+- Display > 132 Columns, iCE Colours, an editor for the 16 ANSI colours
+  and Display > Modern Icons for the tool bar.
+- An ARexx port, and a login macro that waits for a text.
+- RTG and 256-colour AGA screens, and a grey user interface on 16 colours.
+
+The full list of changes is in the Docs drawer (CHANGES) and in the
+History node of DCTelnet.guide.
+
+Requirements
+
+- Kickstart / Workbench v2.00 (V36) or higher
+- A TCP/IP stack: AmiTCP, Roadshow, Miami, UAE bsdsocket.library or
+  compatible
+
+Installation
+
+1. Download DCTelnet.lha from the GitHub releases section:
+   https://github.com/spotUP/dctelnet/releases
+2. Run the Installer script in the archive. On systems without the
+   Installer tool, copy the files by hand as described in the Installation
+   node of DCTelnet.guide.
