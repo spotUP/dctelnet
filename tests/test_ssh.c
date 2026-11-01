@@ -351,6 +351,18 @@ static void test_padding_longer_than_the_packet(void)
     assert(strstr(ssh.error, "bad padding"));
 }
 
+/* A Telnet server answers with IAC bytes and no newline: refuse at once,
+ * not after 255 bytes that never come. */
+static void test_telnet_iac_is_not_an_ssh_server(void)
+{
+    static const UBYTE iac[] = { 0xFF, 0xFD, 0x03, 0xFF, 0xFB, 0x01 };
+
+    Ssh_Init(&ssh, "u", "p", "ansi", 80, 25, FALSE, HostKey, Ask);
+    Ssh_Receive(&ssh, iac, sizeof(iac));
+    assert(ssh.state == SSH_CLOSED);
+    assert(!strcmp(ssh.error, "SSH: this is not an SSH server"));
+}
+
 static void test_fingerprint_is_openssh_format(void)
 {
     UBYTE fp[32];
@@ -373,6 +385,7 @@ int main(int argc, char **argv)
     test_slow_cpu_refuses_group14_only_servers();
     test_nothing_before_the_keys();
     test_padding_longer_than_the_packet();
+    test_telnet_iac_is_not_an_ssh_server();
     test_curve25519_password_and_a_rekey();
     test_group14_keyboard_interactive();
     printf("ssh: all assertions passed\n");

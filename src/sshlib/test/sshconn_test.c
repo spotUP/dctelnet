@@ -57,8 +57,14 @@ BOOL GetSecretRequester(struct Window *parent, STRPTR title, STRPTR prompt, STRP
     return FALSE;
 }
 
+static char localText[256];
+static int localCalls;
+
 void LocalFmt(char *ctl, ...)
 {
+    /* varargs sit on the stack right after ctl; the one argument is the %s text */
+    localCalls++;
+    strlcpy(localText, ((const char **)&ctl)[1], sizeof(localText));
 }
 
 size_t strlcpy(char *dst, const char *src, size_t dstSize)
@@ -155,6 +161,13 @@ int main(int argc, char **argv)
         check(SshConn_Active() && !SshConn_Buffered(), "session exists (head fields read, no call)");
         check(sendCalls == 1 && memcmp(sentStart, "SSH-2.0-", 8) == 0,
               "the library's Ssh_Create / Ssh_TakeOutput produced the identification string");
+        {
+            UBYTE tbuf[16];
+            LONG r = SshConn_Read(tbuf, sizeof(tbuf));       /* FakeRecv: EOF */
+
+            check(r == 0 && localCalls == 1 && strstr(localText, "no SSH version line"),
+                  "EOF before the version line shows the Telnet-port message");
+        }
         SshConn_End(FALSE);
         check(!SshConn_Active() && SshBase == NULL, "SshConn_End deletes the session and closes the library");
     }
