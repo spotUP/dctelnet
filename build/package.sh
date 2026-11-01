@@ -36,6 +36,7 @@ cp "$ROOT_DIR/src/sshlib/build/68040/ssh.library"   "$RELEASE_DIR/DCTelnet/Libs/
 cp "$ROOT_DIR/src/sshlib/build/68060/ssh.library"   "$RELEASE_DIR/DCTelnet/Libs/ssh.library.060"
 cp "$ROOT_DIR/LICENSE"                               "$RELEASE_DIR/DCTelnet/Docs/"
 cp "$ROOT_DIR"/docs/DCTelnet.*                       "$RELEASE_DIR/DCTelnet/Docs/"
+cp "$ROOT_DIR"/docs/CHANGES                          "$RELEASE_DIR/DCTelnet/Docs/"
 cp "$ROOT_DIR/docs/FILE_ID.DIZ"                      "$RELEASE_DIR/FILE_ID.DIZ"
 
 # Match the Amiga script: remove the root icon and icons for immediate subdirectories.

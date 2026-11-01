@@ -1,0 +1,96 @@
+DCTelnet 2.0-UP/X (unofficial release, 1.11.2026)
+Based on upstream DCTelnet 2.0-dev by Bruno Frederic.
+
+New Features:
+- Built-in renderer (Display > Renderer), default on 68020 and better:
+  ANSI, VT and xterm sequences, UTF-8, 256-colour and RGB text, box and
+  block characters, mouse reports (with the NewMouse wheel), bracketed
+  paste, window titles, scrollback with Shift+Page Up/Down and the mouse
+  wheel. It works on RTG and 256-colour AGA screens and keeps its text when
+  the display reopens.
+- SSH runs on ssh.library; the Installer copies the build for your CPU
+  (68000, 68020, 68040 or 68060) to LIBS:. The host gets the terminal name
+  xterm or ansi instead of VT102.
+- Terminal Type (Automatic, BBS, Unix, PETSCII) and iCE Colours, with a PC
+  ANSI personality
+- ANSI music follows the GW-BASIC PLAY rules of SyncTERM; it is on in a
+  first run's preferences, and text after a foreground tune waits until
+  the tune has played
+- PETSCII keys: capitals, Ctrl and Commodore colour keys
+- PETSCII Mode for Commodore 64 BBSes, with the Petscii and PetsciiLower
+  fonts (Terminal menu); a character set switch changes the whole screen,
+  as on a C64
+- Modern Icons tool bar (Display menu)
+- Menu check marks and local echo follow the session
+- Per-BBS settings: each Address Book entry can override four groups of
+  settings (Screen, Terminal, Keyboard, Transfer), and has a comment and
+  a login macro. Connection > Save Settings to Address Book Entry saves what
+  was changed during a connection.
+- 256-colour AGA and RTG (Picasso96/CyberGraphX) screen modes; the 16 ANSI
+  colours get their own pens, also on the Workbench
+- Palette editor for the 16 ANSI colours, with live preview (also on
+  true-colour screens)
+- DCTelnet's own screen has a grey interface and a blue title bar; a font
+  or palette change there reopens only the terminal
+- TopazPro font for square-pixel screen modes
+- 80-column terminal: the Workbench window opens 80x25 and does not grow
+  wider than 80 columns; on a wider screen the terminal is centred
+- The BBS is told the real text area (NAWS), and again after every resize
+  or font change
+- Screen Font changes in place (ibmcon.device and console.device renderers),
+  without closing the screen or the window
+- Select text with the mouse; Edit > Copy (Right-Amiga+C), Paste
+  (Right-Amiga+V) and Copy Screen; Reset Screen is now Right-Amiga+Z
+- Capture to File and Save Screen (DCTelnet menu); find text in the Scroll
+  Back (F2)
+- Redial, keep alive and connect timeout (Settings > Connection Options);
+  the login macro's waits no longer freeze the window
+- Rlogin connections (Terminal > Rlogin), with automatic login on
+  Synchronet
+- SSH connections (Terminal > SSH), with known server keys in
+  PROGDIR:KnownHosts; DCTelnet says so when an SSH connect reaches a
+  Telnet server
+- Character Set: UTF-8 BBSes and hosts (also when a character is split
+  between two network reads), Amiga BBS text copied as it is
+- Bell as a flash, a sound or off, also in PETSCII sessions
+- 132 Columns
+- Import a SyncTERM phone book into the Address Book
+- An ARexx port (DCTELNET.1) with CONNECT, SEND, WAITFOR and more; the
+  login macro can wait for a text (\w"Password:"). ARexx keeps being
+  served while a connect is in progress.
+- Programs that ask where the cursor is (Device Status Report) get an
+  answer, so BBS animations and countdowns no longer stall
+- ibmcon.device 1.11: screen buffer, blinking text and reading text back
+  from the screen; the console.device renderer gains colours, background
+  and the C64 character sets
+- Home, End, Page Up, Page Down and Insert keys (VT Keys option), and the
+  cursor keys follow the host's cursor key mode
+- Settings from 1.x versions load with all their settings and get colours
+  for the built-in renderer; a 68000 or 68010 starts with the
+  ibmcon.device renderer
+- DCTelnet uses the newest ibmcon.device and libraries from its own drawer
+  or from DEVS: / LIBS:; the package has Devs, Fonts and Libs drawers
+- The start-up screen shows the display engine, screen and text area
+- The cursor is a solid block; shell prompt arrows show as '>'
+
+Bug Fixes:
+- Menu items were grey, as if disabled, on screens with 32+ colours
+- Menus were hard to read on AmigaOS 2.x
+- Deleting the first Address Book entry left no selection
+- Typing in a field entered with Tab now replaces its text
+- Finger replies are no longer shown as a staircase
+- F1 in PETSCII Mode sent the code of F2
+- Shift+F1-F10 sent the macro of the next key and a "~"; Shift+Cursor
+  keys and Help sent stray characters
+- Text requesters (Connect, Find ...) needed Return twice
+- Codes such as CSI ?25h left "25h" in the Scroll Back
+- SSH sessions echoed twice and Backspace did not work
+- Answers from XEM libraries did not reach the BBS
+- ibmcon.device: Insert Lines did not scroll the whole region, and closing
+  the device freed DCTelnet's signal bit 31
+- An 8-bit control character in pasted text could end a bracketed paste
+  early
+- The Terminal Type label overlapped the Characters gadget
+- The tool bar icons were drawn for fixed pens and showed pink, cyan and
+  blue on most screens. New flat, antialiased icons carry their own
+  colours and are matched to every screen, in a square and a wide set.

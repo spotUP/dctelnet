@@ -212,9 +212,21 @@ The required third-party source code dependencies are also included:
 
 - **DCTelnet** was originally written by **Zed**.
 - new 68000-compatible build by **Bruno FREDERIC**
-- PETSCII Mode, per-BBS settings, RTG/256-colour support, the palette
-  editor and ibmcon.device 1.5-1.11 by [**spotUP**](https://github.com/spotUP).
-  The PETSCII key and fallback tables are from SyncTERM by Rob Swindell (LGPL).
+- 2.0-UP/X additions by [**spotUP**](https://github.com/spotUP):
+  - the built-in terminal renderer (ANSI, VT, xterm, UTF-8, 256 and 24-bit
+    colours, 132 columns, scrollback, mouse reports, bracketed paste), built on
+    the vtcon engine from [UP-Term](https://github.com/spotUP/UP-Term)
+  - PETSCII Mode for Commodore 64 BBSes, with the Petscii and PetsciiLower fonts
+  - SSH-2 connections and ssh.library for every CPU (68000 to 68060), and Rlogin
+  - ANSI music and the bell options
+  - text selection, copy and paste, capture, ANSI screen save and scrollback search
+  - per-BBS settings, SyncTERM phone book import, redial, keep alive and the
+    login macro
+  - the ARexx port
+  - RTG and 256-colour support, the palette editor, Modern Icons and the
+    own-screen interface
+  - ibmcon.device 1.5-1.11
+- The PETSCII key and fallback tables are from SyncTERM by Rob Swindell (LGPL).
 - VBCC Docker builder image by [**George Sokianos**](https://github.com/walkero-gr)
 - ReqTools is Copyright © Nico François and Magnus Holmgren
 
