@@ -179,6 +179,12 @@ ULONG Prefs_FirstRunState(ULONG rendererBits)
     return APP_FULLSCREEN | APP_SCROLLBACK_ENABLED | rendererBits;
 }
 
+void Prefs_ApplyFirstRun(struct PrefsStruct *p, ULONG rendererBits)
+{
+    p->State = Prefs_FirstRunState(rendererBits);
+    p->AnsiMusic = 1;
+}
+
 BOOL Prefs_ScreenFits(const struct PrefsStruct *p)
 {
     if (p->State & APP_RENDERER_BUILTIN)

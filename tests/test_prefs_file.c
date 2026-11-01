@@ -222,6 +222,18 @@ static void test_a_first_run_has_scrollback_history_on(void)
     assert((s & (APP_RENDERER_BUILTIN | APP_RENDERER_XEM_LIB | APP_RENDERER_IBMCON_DEVICE)) == APP_RENDERER_BUILTIN);
 }
 
+/* ANSI music plays out of the box: a first run (no prefs file) has
+ * Terminal > ANSI Music on, and the first-run State. */
+static void test_a_first_run_has_ansi_music_on(void)
+{
+    struct PrefsStruct p;
+
+    memset(&p, 0, sizeof(p));
+    Prefs_ApplyFirstRun(&p, APP_RENDERER_BUILTIN);
+    assert(p.AnsiMusic != 0);
+    assert(p.State == Prefs_FirstRunState(APP_RENDERER_BUILTIN));
+}
+
 /* PETSCII Mode used to be State bit 15; it is now Terminal Type PETSCII.
  * A file that still has the bit loads as that type with the bit clear, and
  * Terminal Type 3 itself loads unchanged. */
@@ -259,6 +271,7 @@ int main(void)
     test_the_built_in_renderer_fits_any_screen_of_80x25_cells();
     test_a_1x_file_gives_the_built_in_renderer_its_colours();
     test_a_first_run_has_scrollback_history_on();
+    test_a_first_run_has_ansi_music_on();
     test_the_old_petscii_flag_becomes_the_petscii_terminal_type();
     printf("prefs_file: all assertions passed\n");
     return 0;
