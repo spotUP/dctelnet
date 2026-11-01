@@ -293,6 +293,13 @@ $(OBJDIR):
 # vtcon's engine (third_party/vtcon) builds into its source layout.
 $(OBJS): | $(OBJDIR)/third_party/vtcon/engine $(OBJDIR)/third_party/vtcon/render
 
+# DCTelnet.c embeds BUILD_HASH and AMIGADATE in its version strings. The stamp name carries
+# both, so a new commit or day makes a missing stamp and DCTelnet.o recompiles (tests: check-build-hash).
+BUILDINFO_STAMP := $(OBJDIR)/buildinfo-$(BUILD_HASH)-$(AMIGADATE).stamp
+$(OBJDIR)/DCTelnet.o: $(BUILDINFO_STAMP)
+$(BUILDINFO_STAMP): | $(OBJDIR)
+	$(TOUCH) $@
+
 # vtcon's portable C lays structs out for readability (warning 306: padding).
 ifeq ($(TOOLCHAIN),vbcc)
 $(patsubst %.c,$(OBJDIR)/%.o,$(filter third_party/vtcon/%,$(SRCS))): CFLAGS += -dontwarn=306
@@ -325,7 +332,7 @@ allclean:
 clean_cpu:
 	@echo "----------------- $@ $(CPU) ------------------------"
 #	"-" sign -> make will ignore errors of the commands
-	-$(RM) $(TARGET_EXE) $(OBJS) $(MAKEFILE_UPTODATE)
+	-$(RM) $(TARGET_EXE) $(OBJS) $(MAKEFILE_UPTODATE) $(BUILDINFO_STAMP)
 
 # Force clean when Makefile is updated :
 $(MAKEFILE_UPTODATE): Makefile | $(OBJDIR)
