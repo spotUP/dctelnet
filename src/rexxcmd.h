@@ -6,7 +6,8 @@
  *   SENDLN text           send text and Return
  *   WAITFOR text [secs]   reply when the BBS has sent text (RC 5: timed out)
  *   CAPTURE file | OFF    Capture to File
- *   GETSTATUS             RESULT "CONNECTED host port" or "DISCONNECTED"
+ *   GETSTATUS             RESULT "CONNECTED host port", "CONNECTING host port"
+ *                         or "DISCONNECTED"
  *   QUIT
  * An argument with spaces is written in double quotes. */
 #ifndef REXXCMD_H
@@ -34,5 +35,17 @@ BOOL RexxCmd_Parse(const char *line, struct RexxCmd *out);
 /* C-style escapes of SEND text: \r Return, \n line feed, \e ESC, \\ '\'.
  * Returns the length written to out (at most max). */
 size_t RexxCmd_Unescape(const char *in, char *out, size_t max);
+
+/* What the main task does with a command that comes while a connect is in
+ * progress. The connect does not block the ARexx port: a script that polls
+ * GETSTATUS after CONNECT gets its answer at once, not after the TCP stack
+ * gives up on a host that never answers. */
+enum RexxWhileConnecting
+{
+    REXX_RUN_NOW,       /* answer it now: it does not touch the connection */
+    REXX_HOLD,          /* run it once the connect has ended, in order */
+    REXX_STOP_AND_HOLD  /* stop the connect (as Abort does), then run it */
+};
+int RexxCmd_WhileConnecting(int verb);
 
 #endif /* REXXCMD_H */

@@ -87,3 +87,18 @@ size_t RexxCmd_Unescape(const char *in, char *out, size_t max)
     }
     return n;
 }
+
+int RexxCmd_WhileConnecting(int verb)
+{
+    switch (verb)
+    {
+    case REXX_GETSTATUS:
+    case REXX_CAPTURE:
+        return REXX_RUN_NOW;
+    case REXX_DISCONNECT:
+    case REXX_QUIT:
+        return REXX_STOP_AND_HOLD;
+    default:                    /* CONNECT, SEND, SENDLN, WAITFOR: need the result */
+        return REXX_HOLD;
+    }
+}

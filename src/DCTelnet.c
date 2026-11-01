@@ -51,6 +51,7 @@ extern struct Library *CyberGfxBase;
 #include <libraries/reqtools.h>       // struct rtFileList, RT_FILEREQ, RT_Window
 #include <proto/reqtools.h>           // rtAllocRequestA() rtScreenModeRequest() rtPaletteRequestA()
 #include <proto/socket.h>             // send(), <CloseSocket>()
+#include <sys/ioctl.h>                // FIONBIO: the connect does not block
 #include <arpa/telnet.h>
 #include "petscii_dispatch.h"
 #include "petscii_keymap.h"
@@ -3593,11 +3594,16 @@ static void SendKey(int id)
 struct RxsLib *RexxSysBase;
 static struct MsgPort *rexxPort;
 static char rexxPortName[16];
+static struct List rexxHeld;        // commands that came during a connect, run after it
+static BOOL isConnecting;           // a connect is in progress (EstablishTCPConnection)
 
 static void RexxOpen(void)
 {
     int n;
 
+    rexxHeld.lh_Head     = (struct Node *)&rexxHeld.lh_Tail;  // NewList()
+    rexxHeld.lh_Tail     = NULL;
+    rexxHeld.lh_TailPred = (struct Node *)&rexxHeld.lh_Head;
     if (!(RexxSysBase = (struct RxsLib *)OpenLibrary("rexxsyslib.library", 36)))
         return;                                 // no ARexx: no port
     if (!(rexxPort = CreateMsgPort()))
@@ -3644,6 +3650,8 @@ static void RexxClose(void)
     {
         if (waitRexxMsg)
             WaitForDone(WAIT_CANCELLED);
+        while ((msg = (struct Message *)RemHead(&rexxHeld)) != NULL)
+            RexxReply((struct RexxMsg *)msg, 20, NULL);
         Forbid();
         RemPort(rexxPort);
         while ((msg = GetMsg(rexxPort)))
@@ -3720,6 +3728,8 @@ static void RexxCommand(struct RexxMsg *msg)
     case REXX_GETSTATUS:
         if (isConnected)
             mysprintf(status, "CONNECTED %s %ld", server, (LONG)tcpPort);
+        else if (isConnecting)
+            mysprintf(status, "CONNECTING %s %ld", server, (LONG)tcpPort);
         else
             strlcpy(status, "DISCONNECTED", sizeof(status));
         RexxReply(msg, 0, status);
@@ -3736,12 +3746,44 @@ static void RexxMessages(void)
 {
     struct Message *msg;
 
+    if (!rexxPort)
+        return;
+    while ((msg = (struct Message *)RemHead(&rexxHeld)) != NULL)   // in the order they came
+        RexxCommand((struct RexxMsg *)msg);
     while (rexxPort && (msg = GetMsg(rexxPort)))
     {
         if (IsRexxMsg((struct RexxMsg *)msg))
             RexxCommand((struct RexxMsg *)msg);
         else
             ReplyMsg(msg);
+    }
+}
+
+// The ARexx port while a connect is in progress: GETSTATUS is answered at
+// once, DISCONNECT and QUIT stop the connect, the rest waits for its end
+// (RexxCmd_WhileConnecting). The connect used to block the main task, so a
+// script's next command sat unanswered until the TCP stack gave up.
+static void RexxMessagesWhileConnecting(void)
+{
+    struct Message *msg;
+    struct RexxCmd cmd;
+
+    while (rexxPort && (msg = GetMsg(rexxPort)))
+    {
+        if (!IsRexxMsg((struct RexxMsg *)msg))
+        {
+            ReplyMsg(msg);
+            continue;
+        }
+        if (!RexxCmd_Parse((char *)ARG0((struct RexxMsg *)msg), &cmd)
+            || RexxCmd_WhileConnecting(cmd.verb) == REXX_RUN_NOW)
+        {
+            RexxCommand((struct RexxMsg *)msg);  // GETSTATUS, CAPTURE, or RC 10
+            continue;
+        }
+        if (RexxCmd_WhileConnecting(cmd.verb) == REXX_STOP_AND_HOLD)
+            isConnectionAborted = CONNECT_ABORTED;  // as the Abort button
+        AddTail(&rexxHeld, &msg->mn_Node);
     }
 }
 
@@ -4925,9 +4967,8 @@ down:                if(lasttop+((scrollbackWin->Height - (scr->Font->ta_YSize +
     }
 }
 
-static void CheckError(void)
+static void CheckError(LONG en)
 {
-    register long en = Errno();
 
     lastConnectErrno = en;
     switch(en)
@@ -5010,8 +5051,52 @@ static void UpdateConnectingWindowMessage(char *msg, UWORD type)
     Wait(SIGBREAKF_CTRL_E);
 }
 
+// connect() for tcpSocket without blocking the main task: the socket is
+// non-blocking until the connect ends, and while it is in progress the ARexx
+// port is served. Ends on the connect's result, on the Abort button or the
+// Connection Options timeout (both set isConnectionAborted and send CTRL-C),
+// or on an ARexx DISCONNECT/QUIT. Returns 0 or the errno of the failure.
+static LONG ConnectServingRexx(void)
+{
+    LONG on = 1, off = 0, err, errLen = sizeof(err), n;
+    fd_set wr;
+    ULONG sigs;
+
+    IoctlSocket(tcpSocket, FIONBIO, (char *)&on);
+    if (connect(tcpSocket, (struct sockaddr *)&inetSocketAddr, sizeof(inetSocketAddr)) == 0)
+        err = 0;
+    else if ((err = Errno()) == EINPROGRESS)
+    {
+        isConnecting = TRUE;
+        for (;;)
+        {
+            if (isConnectionAborted) { err = EINTR; break; }
+            FD_ZERO(&wr);
+            FD_SET(tcpSocket, &wr);
+            sigs = SIGBREAKF_CTRL_C | RexxSig();
+            n = WaitSelect(tcpSocket + 1, 0, &wr, 0, NULL, &sigs);
+            if (n > 0)
+            {
+                err = 0;
+                if (getsockopt(tcpSocket, SOL_SOCKET, SO_ERROR, &err, &errLen) == -1)
+                    err = Errno();
+                break;
+            }
+            if (n < 0 && (err = Errno()) != EINTR)
+                break;                          // CTRL-C (EINTR): see isConnectionAborted
+            RexxMessagesWhileConnecting();      // cheap when the port is empty
+        }
+        isConnecting = FALSE;
+    }
+    IoctlSocket(tcpSocket, FIONBIO, (char *)&off);
+    if (rexxPort && rexxHeld.lh_TailPred != (struct Node *)&rexxHeld)
+        SetSignal(RexxSig(), RexxSig());        // the main loop runs the held ones next
+    return err;
+}
+
 static UWORD EstablishTCPConnection(char *servername, UWORD port)
 {
+    LONG connectErr;
     struct hostent *hostAddr;
     char strIPAddress[16];    // 16 : 255.255.255.255 + '\0'
     char strOfficialName[20]; // Limited by the "Connecting" window field
@@ -5100,9 +5185,9 @@ static UWORD EstablishTCPConnection(char *servername, UWORD port)
     UpdateConnectingWindowMessage("Connecting...", 4);
 
     // connect() expects a generic sockaddr, so cast the INet socket address
-    if(connect(tcpSocket, (struct sockaddr *)&inetSocketAddr, sizeof(inetSocketAddr)) == -1)
+    if((connectErr = ConnectServingRexx()) != 0)
     {
-        CheckError();
+        CheckError(connectErr);
         shutdown(tcpSocket, 2);
         CloseSocket(tcpSocket);
         LEDs();
