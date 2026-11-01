@@ -18,7 +18,6 @@ static const struct { enum MenuItemID id; ULONG flag; } stateChecks[] = {
     { MENU_RLOGIN,              APP_RLOGIN },
     { MENU_SSH,                 APP_SSH },
     { MENU_FAST_SCROLL,         APP_FAST_SCROLL_ENABLED },
-    { MENU_PETSCII_MODE,        APP_PETSCII_MODE },
 };
 
 BOOL MenuChecks_Checked(const struct PrefsStruct *p, enum MenuItemID id, BOOL *checked)
@@ -70,6 +69,7 @@ BOOL MenuChecks_Checked(const struct PrefsStruct *p, enum MenuItemID id, BOOL *c
     case MENU_TERMTYPE_AUTO: *checked = (p->TermType == TERMTYPE_AUTO); return TRUE;
     case MENU_TERMTYPE_BBS:  *checked = (p->TermType == TERMTYPE_BBS);  return TRUE;
     case MENU_TERMTYPE_UNIX: *checked = (p->TermType == TERMTYPE_UNIX); return TRUE;
+    case MENU_TERMTYPE_PETSCII: *checked = Prefs_IsPetscii(p); return TRUE;
 
     case MENU_ICE_COLOURS: *checked = (p->Blink == BLINK_ICE); return TRUE;
 

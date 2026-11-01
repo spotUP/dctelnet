@@ -90,7 +90,6 @@ static void test_toggles_follow_their_state_bits(void) {
         { MENU_RAW_CONNECTION, APP_RAW_CONNECTION },
         { MENU_RLOGIN, APP_RLOGIN },
         { MENU_FAST_SCROLL, APP_FAST_SCROLL_ENABLED },
-        { MENU_PETSCII_MODE, APP_PETSCII_MODE },
     };
     size_t i, j;
     for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
@@ -123,7 +122,9 @@ static void test_ssh_termtype_and_ice_follow_prefs(void) {
     p.TermType = TERMTYPE_BBS;
     assert(!checked(&p, MENU_TERMTYPE_AUTO) && checked(&p, MENU_TERMTYPE_BBS) && !checked(&p, MENU_TERMTYPE_UNIX));
     p.TermType = TERMTYPE_UNIX;
-    assert(!checked(&p, MENU_TERMTYPE_BBS) && checked(&p, MENU_TERMTYPE_UNIX));
+    assert(!checked(&p, MENU_TERMTYPE_BBS) && checked(&p, MENU_TERMTYPE_UNIX) && !checked(&p, MENU_TERMTYPE_PETSCII));
+    p.TermType = TERMTYPE_PETSCII;
+    assert(!checked(&p, MENU_TERMTYPE_UNIX) && checked(&p, MENU_TERMTYPE_PETSCII));
     p.Blink = BLINK_ICE;
     assert(checked(&p, MENU_ICE_COLOURS));
     p.Blink = BLINK_STEADY;

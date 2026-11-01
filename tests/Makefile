@@ -11,8 +11,8 @@ STACK_MAX := 400
 STACKCHK := $(shell $(CC) -Werror -Wstack-usage=$(STACK_MAX) -c -x c /dev/null -o /dev/null 2>/dev/null && echo -Wstack-usage=$(STACK_MAX))
 
 TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_glyphraster test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_renderer test_iconpens test_vtpersonality test_vtpens test_vtinput test_nearest_pen
-.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu
-all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu
+.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype
+all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -82,6 +82,19 @@ check-local-echo-menu:
 	@cd ../src && if LC_ALL=C grep --text --after-context=12 '^static void SetLocalEchoBack(BOOL wantedState)$$' DCTelnet.c | LC_ALL=C grep --text --quiet 'MenuStrip(win' \
 		|| ! LC_ALL=C grep --text --after-context=12 '^static void SetLocalEchoBack(BOOL wantedState)$$' DCTelnet.c | LC_ALL=C grep --text --quiet 'SyncMenuChecks()'; then \
 		echo "ERROR: SetLocalEchoBack must update the menu through SyncMenuChecks(), not ClearMenuStrip/ResetMenuStrip on the main window."; \
+		exit 1; \
+	fi
+
+# PETSCII is a Terminal Type. The old State bit (APP_OLD_PETSCII_MODE) is read
+# only by the migration in prefs_file.c; every other test of "is this PETSCII"
+# goes through Prefs_IsPetscii, the View menu check in menu_checks.c reads it,
+# and the old menu item and settings checkbox are gone.
+check-petscii-termtype:
+	@cd ../src && if LC_ALL=C grep -aqE 'APP_PETSCII_MODE|MENU_PETSCII_MODE|SG_TERM_PETSCII' *.c *.h \
+		|| LC_ALL=C grep -alE 'APP_OLD_PETSCII_MODE' *.c *.h | LC_ALL=C grep -qvxE 'prefs\.h|prefs_file\.[ch]' \
+		|| ! LC_ALL=C grep -a 'MENU_TERMTYPE_PETSCII' menu_checks.c | LC_ALL=C grep -aq 'Prefs_IsPetscii(p)' \
+		|| ! LC_ALL=C grep -a 'define PETSCII_SESSION' DCTelnet.c | LC_ALL=C grep -aq 'Prefs_IsPetscii'; then \
+		echo "ERROR: PETSCII must be read through Prefs_IsPetscii; APP_OLD_PETSCII_MODE only in prefs.h, prefs_file.c and prefs_file.h; the old menu item and checkbox must stay gone."; \
 		exit 1; \
 	fi
 
