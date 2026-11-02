@@ -10,7 +10,7 @@ Highlights
   xterm, 256 colours, 24-bit RGB, mouse reports, bracketed paste, window
   titles and scrollback. The older renderers stay in Display > Renderer.
 - SSH connections through the new ssh.library, plus Rlogin.
-- PETSCII mode for Commodore 64 BBSes, with C64 fonts included.
+- PETSCII mode for Commodore 64 BBSes, with the C64 characters built in.
 - ANSI music, with Bell as Flash, Sound or Off.
 - Per-BBS settings in the Address Book, SyncTERM phone book import,
   redial, keep alive and connect timeout.

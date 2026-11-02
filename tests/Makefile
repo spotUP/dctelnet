@@ -10,7 +10,7 @@ CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 STACK_MAX := 400
 STACKCHK := $(shell $(CC) -Werror -Wstack-usage=$(STACK_MAX) -c -x c /dev/null -o /dev/null 2>/dev/null && echo -Wstack-usage=$(STACK_MAX))
 
-TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_glyphraster test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_renderer test_iconpens test_vtpersonality test_vtpens test_vtinput test_nearest_pen test_vtshadow
+TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_glyphraster test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_renderer test_iconpens test_vtpersonality test_vtpens test_vtinput test_nearest_pen test_vtshadow test_petscii_font
 # The test programs are host executables, but make only compares
 # timestamps. Docker "make ci" (Linux) and "make host-ci" (macOS) share this
 # directory, so a binary built by one would be run by the other ("Exec
@@ -20,8 +20,8 @@ ifneq ($(HOST_ID),$(shell cat .host-id 2>/dev/null))
 $(shell rm -f $(TESTS) ansimusic_dump; echo '$(HOST_ID)' > .host-id)
 endif
 
-.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-build-hash check-welcome-kept-text check-petscii-reopen check-font-cancel
-all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-welcome-kept-text check-petscii-reopen check-font-cancel
+.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-build-hash check-welcome-kept-text check-petscii-reopen check-font-cancel check-petscii-font-builtin
+all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-welcome-kept-text check-petscii-reopen check-font-cancel check-petscii-font-builtin
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -184,6 +184,10 @@ MODULE_HDR := ../src/petscii_screencode.h ../src/petscii_fallback.h ../src/petsc
 test_petscii_modules: test_petscii_modules.c $(MODULE_SRC) $(MODULE_HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^)
 
+test_petscii_font: test_petscii_font.c ../src/petscii_font.c ../src/petscii_glyphs.c ../src/petscii_font.h \
+                   ../build/package/DCTelnet/Fonts/Petscii/8 ../build/package/DCTelnet/Fonts/PetsciiLower/8
+	$(CC) $(CFLAGS) -Ishim -I../src -o $@ $(filter %.c,$^)
+
 test_petscii_dispatch: test_petscii_dispatch.c ../src/petscii_dispatch.c ../src/petscii_dispatch.h \
                        ../src/petscii_screencode.c ../src/petscii_fallback.c $(MODULE_HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^)
@@ -314,3 +318,15 @@ check-font-cancel:
 		echo "ERROR: DCTelnet.c MENU_SCREEN_FONT: the FontRequester() branch needs braces, or VtApplyPersonality() runs after a cancel."; \
 		exit 1; \
 	fi
+
+# C64 font is drawn from the program, without Petscii.font on disk: a PETSCII
+# session on ibmcon, console.device or the built-in renderer showed CP437
+# lookalikes when the font files were not installed. OpenPetsciiFonts() builds
+# both fonts from the compiled-in glyphs (test_petscii_font holds that build
+# to the shipped fonts) and must not go back to a disk lookup.
+check-petscii-font-builtin:
+	@cd ../src && body=$$(LC_ALL=C sed -n '/^static void OpenPetsciiFonts(void)/,/^}/p' DCTelnet.c); \
+	if ! printf '%s\n' "$$body" | LC_ALL=C grep --text --quiet 'BuildPetsciiFont(&petsciiFontUpperStore'; then \
+		echo "ERROR: DCTelnet.c OpenPetsciiFonts() must build the C64 fonts from the compiled-in glyphs (BuildPetsciiFont)."; exit 1; fi; \
+	if printf '%s\n' "$$body" | LC_ALL=C grep --text --quiet 'OpenBundledFont\|OpenDiskFont\|OpenFont'; then \
+		echo "ERROR: DCTelnet.c OpenPetsciiFonts() opens a font from disk: without Petscii.font installed the session shows CP437 lookalikes."; exit 1; fi
