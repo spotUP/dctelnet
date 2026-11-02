@@ -20,8 +20,8 @@ ifneq ($(HOST_ID),$(shell cat .host-id 2>/dev/null))
 $(shell rm -f $(TESTS) ansimusic_dump; echo '$(HOST_ID)' > .host-id)
 endif
 
-.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-build-hash
-all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic
+.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-build-hash check-welcome-kept-text
+all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-welcome-kept-text
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -90,6 +90,19 @@ check-ssh-terminal:
 		|| ! LC_ALL=C grep --text --after-context=12 'SshConn_Start(' DCTelnet.c | LC_ALL=C grep --text --quiet 'SetLocalEchoBack(FALSE)' \
 		|| ! LC_ALL=C grep --text --after-context=6 'static void OutKey' DCTelnet.c | LC_ALL=C grep --text --quiet 'Vt_BackspaceByte'; then \
 		echo "ERROR: DCTelnet.c must pass Vt_SshTermName to SshConn_Start, call SetLocalEchoBack(FALSE) after it, and use Vt_BackspaceByte in OutKey."; \
+		exit 1; \
+	fi
+
+# A display reopen (Tool Bar, Title Bar, Full-screen) keeps the terminal's text
+# (vtKeptText, the console shadow). OpenDisplay()'s welcome screen starts with a
+# form feed that clears: it must be written only when the reopen kept nothing,
+# and displayKeptText must come from both renderers (host tests cannot link
+# DCTelnet.c).
+check-welcome-kept-text:
+	@cd ../src && if ! LC_ALL=C grep --text --quiet 'if(!isConnected && !displayKeptText)' DCTelnet.c \
+		|| ! LC_ALL=C grep --text --quiet 'displayKeptText = ShadowRestore() || (STATE_IS(APP_RENDERER_BUILTIN) && vtKeptText);' DCTelnet.c \
+		|| ! LC_ALL=C grep --text --after-context=80 'if(!isConnected && !displayKeptText)' DCTelnet.c | LC_ALL=C grep --text --quiet 'Processor: '; then \
+		echo "ERROR: DCTelnet.c OpenDisplay() must write the welcome screen only when !displayKeptText (set from ShadowRestore() and vtKeptText)."; \
 		exit 1; \
 	fi
 
