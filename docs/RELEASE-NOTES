@@ -26,6 +26,9 @@ Highlights
 - Ending or starting a PETSCII Address Book entry now clears the screen and
   shows the welcome screen, instead of leaving the C64 screen drawn in the
   ANSI font.
+- Ending an Address Book session no longer leaves a blank screen. The
+  session's text and the "Connection closed" note stay, unless the entry
+  used another Terminal Type than the settings.
 
 The full list of changes is in the Docs drawer (CHANGES) and in the
 History node of DCTelnet.guide.
