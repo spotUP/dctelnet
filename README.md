@@ -173,45 +173,12 @@ instead of moving the cursor. Not yet confirmed on every BBS in the report.
 Details on [GitHub issue #11](https://github.com/bruno-frederic/dctelnet/issues/11).
 
 
-#### Fullscreen editors leave old lines on screen (fixed in ibmcon.device 1.7)
-
-Insert Lines (CSI L) moved only a few pixel lines, so an editor that scrolls
-down, such as on ABBS/MBBS, left old text behind.
-
-Details on [GitHub issue #9](https://github.com/bruno-frederic/dctelnet/issues/9)
-
-
 ### Network issues with AmiBerry and FS-UAE on Linux
 
 Connection issues have been reported when using the integrated TCP/IP stack provided by AmiBerry or FS-UAE under Linux. The problem appears to be specific to these emulators' bsdsocket.library implementations. Using a different IP stack resolves the issue.
 
 Details on [GitHub issue #13](https://github.com/bruno-frederic/dctelnet/issues/13).
 
-
-### Connection stuck after changing display settings (fonts, XEM, screen mode) or iconifying the application (fixed in v1.8)
-
-This issue had existed since **DCTelnet 1.1** and occured when used with certain
-versions of "bsdsocket.library", notably UAE bsdsocket.library 4.1 (WinUAE)
-and Amiberry's built-in library.
-
-The cause is fixed in ibmcon.device 1.8: closing the console freed a signal
-of the program that opened it (bit 31, which bsdsocket.library can hold).
-
-Details on [GitHub issue #3](https://github.com/bruno-frederic/dctelnet/issues/3).
-
-
-### Address Book Profile may not be saved correctly (fixed in v1.8)
-
-This bug has been present at least since the original version 1.1 release (December 1997).
-
-Details on [GitHub issue #4](https://github.com/bruno-frederic/dctelnet/issues/4).
-
-
-### On AmigaOS / Kickstart 2.00 & 2.02 (fixed in v1.8)
-
-The `xprzmodem.library` bundled with DCTelnet since v1.1 fails to load on these OS versions. [(issue #5)](https://github.com/bruno-frederic/dctelnet/issues/5)
-
-Starting with v1.8, a compatible version of the library is included in the `Libs-r36/` directory.
 
 ---
 
