@@ -1,9 +1,19 @@
 # DCTelnet
-[![Latest Release](https://img.shields.io/github/v/release/bruno-frederic/dctelnet?color=green)](https://github.com/bruno-frederic/dctelnet/releases)
+[![2.0-UP/X release](https://img.shields.io/github/v/release/spotUP/dctelnet?color=orange&label=unofficial%20release)](https://github.com/spotUP/dctelnet/releases)
 ![AmigaOS 2.0+](https://img.shields.io/badge/AmigaOS-2.0+-blue)
 ![Motorola CPU 68000+](https://img.shields.io/badge/CPU-68000+-blue)
-[![Aminet package](https://img.shields.io/badge/aminet-comm/tcp/DCTelnet-green)](https://aminet.net/package/comm/tcp/DCTelnet)
 
+
+> **This is DCTelnet 2.0-UP/X, a special unofficial release.**
+> It is built by spotUP from the work in progress for DCTelnet 2.0
+> (Bruno Frederic's `v2.0-dev` branch), with extra features and fixes on top.
+> It is not an official DCTelnet release and is not on Aminet.
+>
+> For the official DCTelnet, go to
+> [bruno-frederic/dctelnet](https://github.com/bruno-frederic/dctelnet/releases)
+> or [Aminet](https://aminet.net/package/comm/tcp/DCTelnet).
+> Please do not report problems found in this build to the official project.
+> See [New in 2.0-UP/X](#new-in-20-upx-unofficial-release) for what is different.
 
 **DCTelnet** is a Telnet client for **Amiga** computers.
 It is **easy to use**, **lightweight**, and **reliable**.
