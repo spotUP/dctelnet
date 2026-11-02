@@ -54,13 +54,51 @@ or join the discussion on the [EAB forum thread](https://eab.abime.net/showthrea
 - **multiple simultaneous** Telnet connections
 - **No** MUI, ClassAct or ReAction required
 - **No** `telser.device` required
-- **2.0-UP/X** (unofficial release): Built-in terminal renderer (default on 68020 and better): UTF-8, xterm,
-  256-colour and RGB text, mouse reports, bracketed paste, window titles
-  and scrollback; the older renderers stay available (Display > Renderer)
-- SSH (through ssh.library) and Rlogin connections
-- PETSCII mode for Commodore 64 BBSes, ANSI music, iCE Colours
-- Per-BBS settings, palette editor, RTG screen modes, ARexx port
-- Modern Icons tool bar
+
+### New in 2.0-UP/X (unofficial release)
+
+**Display**
+- **Built-in terminal renderer** (default on 68020 and better): ANSI, VT and
+  xterm sequences, **UTF-8**, **256-colour and RGB text**, box and block
+  characters, window titles and scrollback (Shift+Page Up/Down or the mouse
+  wheel). The ibmcon.device and console.device renderers stay available
+  (Display > Renderer).
+- **RTG and 256-colour AGA** screen modes (Picasso96, CyberGraphX); the 16 ANSI
+  colours get their own pens, also on the Workbench
+- **Palette editor** for the 16 ANSI colours, with live preview
+- Screen font and palette changes apply in place, without closing the screen
+- **80 and 132 columns**; the BBS is told the real text area (NAWS) after every
+  resize or font change
+- **Modern Icons** tool bar, a grey interface on DCTelnet's own screen, and the
+  TopazPro font for square-pixel screen modes
+
+**Connections**
+- **SSH** through ssh.library, with builds for 68000, 68020, 68040 and 68060
+  (the Installer picks the right one) and known host keys
+- **Rlogin**, with automatic login on Synchronet
+- **Redial, keep alive and connect timeout**
+
+**BBS**
+- **PETSCII** for Commodore 64 BBSes: C64 characters built in (no font to
+  install), whole-screen case switch, Ctrl and Commodore colour keys
+- **ANSI music** by the GW-BASIC PLAY rules, as in SyncTERM
+- **iCE Colours** and a Terminal Type choice: Automatic, BBS, Unix or PETSCII
+- Cursor position requests get an answer, so BBS animations and countdowns no
+  longer stall
+- **Per-BBS settings**: each Address Book entry can override the Screen,
+  Terminal, Keyboard and Transfer settings and has a comment and a login
+  macro; settings changed during a connection can be saved back to the entry
+- Import a **SyncTERM phone book** into the Address Book
+
+**Everyday use**
+- **Mouse**: select and copy text, paste, mouse reports to the host, bracketed
+  paste and the NewMouse wheel
+- **Capture to File**, Save Screen, and find text in the Scroll Back (F2)
+- **ARexx port** (DCTELNET.1) with CONNECT, SEND, WAITFOR and more; the login
+  macro can wait for a text
+- Home, End, Page Up, Page Down and Insert keys
+- Bell as a flash, a sound or off
+- Settings from 1.x versions load with everything kept
 
 ---
 
