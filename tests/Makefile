@@ -20,8 +20,8 @@ ifneq ($(HOST_ID),$(shell cat .host-id 2>/dev/null))
 $(shell rm -f $(TESTS) ansimusic_dump; echo '$(HOST_ID)' > .host-id)
 endif
 
-.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-build-hash check-welcome-kept-text
-all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-welcome-kept-text
+.PHONY: all clean check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-build-hash check-welcome-kept-text check-petscii-reopen
+all: $(TESTS) check-encoding check-fonts check-stack check-statics check-icons check-debug-stack check-currenttime-null check-ssh-terminal check-local-echo-menu check-petscii-termtype check-label-gap check-ansimusic check-welcome-kept-text check-petscii-reopen
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -286,3 +286,16 @@ test_term_engine: test_term_engine.c ../src/third_party/retro32-term/term-engine
                   $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
 	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim -I$(VTCON)/engine -I$(VTCON)/render \
 	      -o $@ test_term_engine.c ../src/glyphraster.c ../src/screenfont.c ../src/vtpersonality.c ../src/vtpens.c ../src/vtinput.c $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
+
+# A PETSCII mode change (an Address Book entry starts or ends) must take the
+# full reopen on every renderer: OpenDisplay() drops the old mode's kept text
+# (VtClose, Shadow_Close) and writes the welcome screen. ReopenTerminal()'s
+# in-place console path replayed C64 text into the ANSI console and the
+# reverse (host tests cannot link DCTelnet.c).
+check-petscii-reopen:
+	@cd ../src && if ! LC_ALL=C grep --text --after-context=12 '^static void ReopenTerminal(void)' DCTelnet.c \
+		| LC_ALL=C grep --text --after-context=3 '(PETSCII_SESSION() != 0) != displayIsPetscii)' \
+		| LC_ALL=C grep --text --quiet 'shouldRestart = TRUE;'; then \
+		echo "ERROR: DCTelnet.c ReopenTerminal() must send a PETSCII mode change to the full reopen (shouldRestart), not replay the old mode's text in place."; \
+		exit 1; \
+	fi
