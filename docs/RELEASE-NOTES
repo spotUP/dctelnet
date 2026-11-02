@@ -20,6 +20,12 @@ Highlights
   and Display > Modern Icons for the tool bar.
 - An ARexx port, and a login macro that waits for a text.
 - RTG and 256-colour AGA screens, and a grey user interface on 16 colours.
+- Turning the Tool Bar, Title Bar or Full-screen on or off while not
+  connected no longer wipes the text in the terminal and no longer prints
+  the welcome screen again.
+- Ending or starting a PETSCII Address Book entry now clears the screen and
+  shows the welcome screen, instead of leaving the C64 screen drawn in the
+  ANSI font.
 
 The full list of changes is in the Docs drawer (CHANGES) and in the
 History node of DCTelnet.guide.

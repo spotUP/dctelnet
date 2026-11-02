@@ -1068,6 +1068,12 @@ Bug Fixes:
 - The tool bar icons were drawn for fixed pens and showed pink, cyan and
   blue on most screens. New flat, antialiased icons carry their own
   colours and are matched to every screen, in a square and a wide set.
+- Turning the Tool Bar, Title Bar or Full-screen on or off while not
+  connected no longer wipes the text in the terminal and no longer prints
+  the welcome screen again.
+- Ending or starting a PETSCII Address Book entry now clears the screen and
+  shows the welcome screen, instead of leaving the C64 screen drawn in the
+  ANSI font.
 
 ---[ DCTelnet 1.10 ]-------------------------------------------------------
 
