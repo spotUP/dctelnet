@@ -105,6 +105,11 @@ check-welcome-kept-text:
 		echo "ERROR: DCTelnet.c OpenDisplay() must write the welcome screen only when !displayKeptText (set from ShadowRestore() and vtKeptText)."; \
 		exit 1; \
 	fi
+	@cd ../src && if ! LC_ALL=C grep --text --after-context=3 'if ((PETSCII_SESSION() != 0) != displayIsPetscii)' DCTelnet.c | LC_ALL=C grep --text --quiet 'VtClose();' \
+		|| ! LC_ALL=C grep --text --after-context=4 'if ((PETSCII_SESSION() != 0) != displayIsPetscii)' DCTelnet.c | LC_ALL=C grep --text --quiet 'Shadow_Close();'; then \
+		echo "ERROR: DCTelnet.c OpenDisplay() must drop the kept engine (VtClose) and the shadow (Shadow_Close) when the PETSCII mode changes."; \
+		exit 1; \
+	fi
 
 # SetLocalEchoBack() runs on SSH connect and telnet ECHO negotiation, while
 # the tool bar, packet and scrollback windows may share the main menu strip.
