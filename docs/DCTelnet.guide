@@ -24,7 +24,7 @@
  @{"     Credits     " LINK CREDITS} Credits
  @{"     License     " LINK LICENSE} License
 
- 2.0-UP/X is an unofficial release. The Terminal and Display menus, with
+ 2.0-UP/X is an unofficial pre-release. The Terminal and Display menus, with
  the Renderer choice, are described in:
  @{"  Terminal and Display  " LINK TERMDISPLAY} The Terminal and Display menus
 @EndNode
@@ -979,7 +979,7 @@ Options and Settings nodes describe the same items under their 1.x names.
                                  @{b}@{u} History @{ub}@{uu}
                                  ~~~~~~~~~
 
----[ DCTelnet 2.0-UP/X (unofficial) ]-------------------------------------
+---[ DCTelnet 2.0-UP/X (unofficial pre-release) ]--------------------------
 New Features:
 - Built-in renderer (Display > Renderer), default on 68020 and better:
   ANSI, VT and xterm sequences, UTF-8, 256-colour and RGB text, box and
