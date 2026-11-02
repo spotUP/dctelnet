@@ -1,5 +1,5 @@
 # DCTelnet
-[![2.0-UP/X release](https://img.shields.io/github/v/release/spotUP/dctelnet?color=orange&label=unofficial%20release)](https://github.com/spotUP/dctelnet/releases)
+[![2.0-UP/X release](https://img.shields.io/github/v/release/spotUP/dctelnet?include_prereleases&color=orange&label=unofficial%20pre-release)](https://github.com/spotUP/dctelnet/releases)
 ![AmigaOS 2.0+](https://img.shields.io/badge/AmigaOS-2.0+-blue)
 ![Motorola CPU 68000+](https://img.shields.io/badge/CPU-68000+-blue)
 
