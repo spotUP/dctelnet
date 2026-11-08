@@ -345,10 +345,6 @@ static void VtTitleRestore(void)
 /* MA3-4..6: the mouse as the program on the far side asked for it. */
 static struct VtMouse vtMouse;
 
-/* Intuition only delivers IDCMP_MOUSEMOVE while ReportMouse is on as well, so
- * the two follow the same decision (DCTelnet.c). */
-static void TerminalMouseReport(void);
-
 /* TRUE when ReportMouse must be on: a selection drag, or a motion mode. */
 static BOOL VtReportMouseWanted(BOOL dragging)
 {
@@ -367,7 +363,21 @@ static void VtSyncMouseIdcmp(void)
     want = Vt_IdcmpFor(win->IDCMPFlags, IDCMP_MOUSEMOVE, vtTerm, ToolBarWantsHover());
     if (want != win->IDCMPFlags)
         ModifyIDCMP(win, want);
-    TerminalMouseReport();
+}
+
+/* The terminal window reports pointer moves while a selection is dragged
+ * (selDragging, DCTelnet.c), as the host's ?1002/?1003 ask, and always while
+ * the Modern tool bar is open: the terminal keeps the focus, so the bar's own
+ * window never sees the pointer cross its buttons. Intuition sends no
+ * IDCMP_MOUSEMOVE without ReportMouse, whatever the window's IDCMP flags say,
+ * so this one call sets both. It is the only place that decides them:
+ * VtSyncMouseIdcmp() must not call back here, or every VtOpen() recurses until
+ * the stack overruns (the first-run screen mode crash). */
+static void TerminalMouseReport(void)
+{
+    if (win)
+        ReportMouse((BOOL)(VtReportMouseWanted(selDragging) || ToolBarWantsHover()), win);
+    VtSyncMouseIdcmp();
 }
 
 /* TRUE when the program owns the mouse (a mouse mode is on, Shift not held):
@@ -460,7 +470,7 @@ static int VtOpen(void)
         vt_resize(vtTerm, term_cols, term_rows);
         Vt_MouseReset(&vtMouse);
         vtTitleSeen[0] = vtTitleShown[0] = 0;
-        VtSyncMouseIdcmp();
+        TerminalMouseReport();
         VtRedraw();         /* the cells again, on the cleared area */
         vtKeptText = TRUE;
         return 0;
@@ -474,7 +484,7 @@ static int VtOpen(void)
     VtApplyPersonality();
     Vt_MouseReset(&vtMouse);
     vtTitleSeen[0] = vtTitleShown[0] = 0;
-    VtSyncMouseIdcmp();
+    TerminalMouseReport();
     VtSyncCursor();
     return 0;
 }
@@ -603,7 +613,7 @@ static void VtWrite(const UBYTE *data, long len)
     cursor_show();
     VtLayersUnlock();
     VtTitleSync();
-    VtSyncMouseIdcmp();             /* ?1002 / ?1003 may have changed */
+    TerminalMouseReport();          /* ?1002 / ?1003 may have changed */
 }
 
 /* A prefix VtWrite held back is waiting to be drawn: the receive loop polls

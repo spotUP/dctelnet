@@ -409,6 +409,9 @@ BYTE dontUseSig31 = -1; // don't use it, ibmcon.device will destroy it.
 #include "DCTelnet-debug.h"
 #define send_data(data, len) TCPSend((data), (len))
 #include "term-engine.c"
+// A selection drag is under way (SelectionDown..SelectionUp): the built-in
+// renderer's TerminalMouseReport() reads it.
+static BOOL  selDragging;
 #include "vtbuiltin.c"
 
 static void ObtainWorkbenchPens(void);
@@ -3914,7 +3917,7 @@ static void RexxMessagesWhileConnecting(void)
 #define CLIP_READ_MAX   16384           // the most of a clip that is pasted
 
 static struct ClipRange selShownRange;
-static BOOL  selShown, selDragging;
+static BOOL  selShown;
 static UWORD selDownRow, selDownCol, selRow, selCol;
 
 static BOOL SelectionAvailable(void)
@@ -4044,18 +4047,6 @@ static void CopyRange(const struct ClipRange *r)
     }
     if (text) FreeVec(text);
     if (iff) FreeVec(iff);
-}
-
-// The terminal window reports pointer moves while a selection is dragged, as the
-// host's ?1002/?1003 ask, and always while the Modern tool bar is open: the
-// terminal keeps the focus, so the bar's own window never sees the pointer
-// cross its buttons. Intuition sends no IDCMP_MOUSEMOVE without ReportMouse,
-// whatever the window's IDCMP flags say.
-static void TerminalMouseReport(void)
-{
-    if (win)
-        ReportMouse((BOOL)(VtReportMouseWanted(selDragging) || ToolBarWantsHover()), win);
-    VtSyncMouseIdcmp();     // the built-in renderer drops IDCMP_MOUSEMOVE otherwise
 }
 
 static void SelectionDown(WORD mx, WORD my)
