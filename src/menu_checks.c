@@ -10,6 +10,7 @@ static const struct { enum MenuItemID id; ULONG flag; } stateChecks[] = {
     { MENU_SCROLLBACK,          APP_SCROLLBACK_ENABLED },
     { MENU_PACKET_WINDOW,       APP_PACKET_WINDOW_ENABLED },
     { MENU_TOOL_BAR,            APP_TOOL_BAR_ENABLED },
+    { MENU_MODERN_ICONS,        APP_MODERN_ICONS },
     { MENU_RETURN_SENDING_CRLF, APP_RETURN_SENDING_CRLF },
     { MENU_VT_KEYS,             APP_VT_KEYS },
     { MENU_LOCAL_ECHO,          APP_LOCAL_ECHO },
@@ -17,7 +18,6 @@ static const struct { enum MenuItemID id; ULONG flag; } stateChecks[] = {
     { MENU_RLOGIN,              APP_RLOGIN },
     { MENU_SSH,                 APP_SSH },
     { MENU_FAST_SCROLL,         APP_FAST_SCROLL_ENABLED },
-    { MENU_PETSCII_MODE,        APP_PETSCII_MODE },
 };
 
 BOOL MenuChecks_Checked(const struct PrefsStruct *p, enum MenuItemID id, BOOL *checked)
@@ -65,6 +65,13 @@ BOOL MenuChecks_Checked(const struct PrefsStruct *p, enum MenuItemID id, BOOL *c
     case MENU_BELL_FLASH: *checked = (p->Bell == BELL_FLASH); return TRUE;
     case MENU_BELL_SOUND: *checked = (p->Bell == BELL_SOUND); return TRUE;
     case MENU_BELL_OFF:   *checked = (p->Bell == BELL_OFF);   return TRUE;
+
+    case MENU_TERMTYPE_AUTO: *checked = (p->TermType == TERMTYPE_AUTO); return TRUE;
+    case MENU_TERMTYPE_BBS:  *checked = (p->TermType == TERMTYPE_BBS);  return TRUE;
+    case MENU_TERMTYPE_UNIX: *checked = (p->TermType == TERMTYPE_UNIX); return TRUE;
+    case MENU_TERMTYPE_PETSCII: *checked = Prefs_IsPetscii(p); return TRUE;
+
+    case MENU_ICE_COLOURS: *checked = (p->Blink == BLINK_ICE); return TRUE;
 
     case MENU_ANSI_MUSIC: *checked = p->AnsiMusic ? TRUE : FALSE; return TRUE;
 

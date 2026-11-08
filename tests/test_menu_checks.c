@@ -83,14 +83,13 @@ static void test_toggles_follow_their_state_bits(void) {
         { MENU_SCROLLBACK, APP_SCROLLBACK_ENABLED },
         { MENU_PACKET_WINDOW, APP_PACKET_WINDOW_ENABLED },
         { MENU_TOOL_BAR, APP_TOOL_BAR_ENABLED },
+        { MENU_MODERN_ICONS, APP_MODERN_ICONS },
         { MENU_RETURN_SENDING_CRLF, APP_RETURN_SENDING_CRLF },
         { MENU_VT_KEYS, APP_VT_KEYS },
         { MENU_LOCAL_ECHO, APP_LOCAL_ECHO },
         { MENU_RAW_CONNECTION, APP_RAW_CONNECTION },
         { MENU_RLOGIN, APP_RLOGIN },
-        { MENU_SSH, APP_SSH },
         { MENU_FAST_SCROLL, APP_FAST_SCROLL_ENABLED },
-        { MENU_PETSCII_MODE, APP_PETSCII_MODE },
     };
     size_t i, j;
     for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
@@ -117,6 +116,21 @@ static void test_bell_and_ansi_music_follow_prefs(void) {
     assert(checked(&p, MENU_ANSI_MUSIC));
 }
 
+static void test_ssh_termtype_and_ice_follow_prefs(void) {
+    struct PrefsStruct p = make(APP_RENDERER_BUILTIN | APP_SSH);
+    assert(checked(&p, MENU_SSH));
+    p.TermType = TERMTYPE_BBS;
+    assert(!checked(&p, MENU_TERMTYPE_AUTO) && checked(&p, MENU_TERMTYPE_BBS) && !checked(&p, MENU_TERMTYPE_UNIX));
+    p.TermType = TERMTYPE_UNIX;
+    assert(!checked(&p, MENU_TERMTYPE_BBS) && checked(&p, MENU_TERMTYPE_UNIX) && !checked(&p, MENU_TERMTYPE_PETSCII));
+    p.TermType = TERMTYPE_PETSCII;
+    assert(!checked(&p, MENU_TERMTYPE_UNIX) && checked(&p, MENU_TERMTYPE_PETSCII));
+    p.Blink = BLINK_ICE;
+    assert(checked(&p, MENU_ICE_COLOURS));
+    p.Blink = BLINK_STEADY;
+    assert(!checked(&p, MENU_ICE_COLOURS));
+}
+
 int main(void) {
     test_an_entry_with_utf8_shows_utf8_checked_not_cp437();
     test_renderer_check_follows_prefs_with_builtin_first();
@@ -124,6 +138,7 @@ int main(void) {
     test_capture_is_not_a_prefs_check();
     test_toggles_follow_their_state_bits();
     test_bell_and_ansi_music_follow_prefs();
+    test_ssh_termtype_and_ice_follow_prefs();
     puts("test_menu_checks: all passed");
     return 0;
 }
