@@ -234,6 +234,7 @@ test_ansiscan: test_ansiscan.c ../src/ansiscan.c ../src/ansiscan.h
 	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
 
 test_renderer: test_renderer.c ../src/renderer.c ../src/renderer.h ../src/prefs.h
+	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
 
 test_recvgate: test_recvgate.c ../src/recvgate.h
 	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
