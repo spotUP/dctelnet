@@ -21,8 +21,8 @@ ifneq ($(HOST_ID),$(shell cat .host-id 2>/dev/null))
 $(shell rm -f $(TESTS) ansimusic_dump; echo '$(HOST_ID)' > .host-id)
 endif
 
-.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-petscii-font-builtin
-all: $(TESTS) check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype
+.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-petscii-font-builtin check-label-gap
+all: $(TESTS) check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-label-gap
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -112,6 +112,11 @@ check-petscii-termtype:
 		echo "ERROR: PETSCII must be read through Prefs_IsPetscii; APP_OLD_PETSCII_MODE only in prefs.h, prefs_file.c and prefs_file.h; the old menu item and checkbox must stay gone."; \
 		exit 1; \
 	fi
+
+# Gadget labels in the GadTools tables of guis.c must not touch the gadget
+# beside them. Host tests cannot open a window, hence a check on the design grid.
+check-label-gap:
+	@awk -f check_label_gap.awk ../src/guis.c || { echo "ERROR: a gadget label touches its neighbour; move the gadget."; exit 1; }
 
 # Parse the shipped PETSCII fonts the way diskfont.library loads them. The
 # first build put the DiskFontHeader 4 bytes late and every OpenDiskFont()
