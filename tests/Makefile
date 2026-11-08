@@ -21,8 +21,8 @@ ifneq ($(HOST_ID),$(shell cat .host-id 2>/dev/null))
 $(shell rm -f $(TESTS) ansimusic_dump; echo '$(HOST_ID)' > .host-id)
 endif
 
-.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-petscii-font-builtin check-label-gap
-all: $(TESTS) check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-label-gap
+.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-petscii-font-builtin check-label-gap check-font-cancel
+all: $(TESTS) check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-label-gap check-font-cancel
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -297,3 +297,13 @@ check-petscii-font-builtin:
 		echo "ERROR: DCTelnet.c OpenPetsciiFonts() must build the C64 fonts from the compiled-in glyphs (BuildPetsciiFont)."; exit 1; fi; \
 	if printf '%s\n' "$$body" | LC_ALL=C grep --text --quiet 'OpenBundledFont\|OpenDiskFont\|OpenFont'; then \
 		echo "ERROR: DCTelnet.c OpenPetsciiFonts() opens a font from disk: without Petscii.font installed the session shows CP437 lookalikes."; exit 1; fi
+
+# Screen font menu: a cancelled font requester changes nothing, so neither the
+# display reopen nor the personality update may run (a068760 added the second
+# call under an if without braces, so it ran after every cancel).
+check-font-cancel:
+	@cd ../src && if ! LC_ALL=C grep --text --after-context=1 '^ *&prefs.FontSize))$$' DCTelnet.c \
+		| LC_ALL=C grep --text --quiet '^ *{$$'; then \
+		echo "ERROR: DCTelnet.c MENU_SCREEN_FONT: the FontRequester() branch needs braces, or VtApplyPersonality() runs after a cancel."; \
+		exit 1; \
+	fi
