@@ -182,12 +182,11 @@ static void SetWindowTitles(struct Window *w, UBYTE *t, UBYTE *s)
 }
 static void LEDs(void) { ledCalls++; }
 static void ModifyIDCMP(struct Window *w, ULONG flags) { w->IDCMPFlags = flags; }
-/* DCTelnet.c's ReportMouse decision (TerminalMouseReport), recorded: Intuition
+/* DCTelnet.c's selection drag flag, and Intuition's ReportMouse recorded: it
  * sends no IDCMP_MOUSEMOVE while it is off. */
 static BOOL selDragging, reportMouse;
 static int reportCalls;
 static void ReportMouse(BOOL on, struct Window *w) { (void)w; reportMouse = on; reportCalls++; }
-static void TerminalMouseReport(void);
 /* guis.c's side: TRUE while the Modern tool bar is open (its hover). */
 static BOOL toolBarHover;
 static BOOL ToolBarWantsHover(void) { return toolBarHover; }
@@ -226,7 +225,6 @@ static vt_term *probe_new(int cols, int rows, int sb, const vt_callbacks *cb, vo
 #include "../src/vtbuiltin.c"
 #undef term_glyph
 #undef vt_new
-static void TerminalMouseReport(void) { ReportMouse(VtReportMouseWanted(selDragging), win); }
 static vt_term *probe_new(int cols, int rows, int sb, const vt_callbacks *cb, void *user)
 {
     newCalls++;
@@ -1321,8 +1319,31 @@ static void test_modern_tool_bar_hover_keeps_the_mouse_move_flag(void)
     vt_put("\x1b[?1003h\x1b[?1003l");                                    /* a mode ending keeps it */
     assert(window.IDCMPFlags & IDCMP_MOUSEMOVE);
     toolBarHover = FALSE;                                                 /* the bar closed */
-    VtSyncMouseIdcmp();
+    TerminalMouseReport();
     assert(!(window.IDCMPFlags & IDCMP_MOUSEMOVE));
+    VtClose();
+}
+
+/* The first-run screen mode crash: VtOpen() synced the mouse flags through
+ * VtSyncMouseIdcmp(), which called TerminalMouseReport(), which called
+ * VtSyncMouseIdcmp() again, until the stack overran. Opening the terminal with
+ * a window decides ReportMouse exactly once, and the flags still follow. */
+static void test_opening_the_terminal_window_sets_report_mouse_once(void)
+{
+    xterm_begin();
+    ma3_reset_sentinels();
+    window.IDCMPFlags = IDCMP_RAWKEY;
+    selDragging = FALSE;
+    toolBarHover = FALSE;
+    reportCalls = 0;
+    assert(VtOpen() == 0);
+    assert(reportCalls == 1);
+    assert(!reportMouse);
+    reportCalls = 0;
+    vt_put("\x1b[?1003h");                                              /* a write syncs once too */
+    assert(reportCalls == 1);
+    assert(reportMouse);
+    assert(window.IDCMPFlags & IDCMP_MOUSEMOVE);
     VtClose();
 }
 
@@ -1634,6 +1655,7 @@ int main(void)
     test_ma3_6_motion_modes_and_the_mouse_move_flag();
     test_any_motion_mode_turns_report_mouse_on_without_a_drag();
     test_modern_tool_bar_hover_keeps_the_mouse_move_flag();
+    test_opening_the_terminal_window_sets_report_mouse_once();
     test_ma4_2_long_art_fills_the_engine_scrollback_and_only_when_asked();
     test_a_scrollback_size_change_keeps_the_screen_and_the_newest_lines();
     test_ma4_3_shift_page_up_draws_the_previous_page_and_page_down_returns();
