@@ -6169,14 +6169,6 @@ void CreateAppMenus(void)
         }
     }
 
-    // Items MenuChecks_Checked() does not know yet (modern icons, TermType, ice colours).
-    SetNewMenuCheckFromPref(MENU_MODERN_ICONS,            APP_MODERN_ICONS);
-    GetNewMenuItemFromID(MENU_TERMTYPE_AUTO)->nm_Flags = CHECKIT | (prefs.TermType == TERMTYPE_AUTO ? CHECKED : 0);
-    GetNewMenuItemFromID(MENU_TERMTYPE_BBS)->nm_Flags  = CHECKIT | (prefs.TermType == TERMTYPE_BBS ? CHECKED : 0);
-    GetNewMenuItemFromID(MENU_TERMTYPE_UNIX)->nm_Flags = CHECKIT | (prefs.TermType == TERMTYPE_UNIX ? CHECKED : 0);
-    GetNewMenuItemFromID(MENU_TERMTYPE_PETSCII)->nm_Flags = CHECKIT | (Prefs_IsPetscii(&prefs) ? CHECKED : 0);
-    GetNewMenuItemFromID(MENU_ICE_COLOURS)->nm_Flags = HIGHCOMP | CHECKIT | MENUTOGGLE | (prefs.Blink == BLINK_ICE ? CHECKED : 0);
-
     // A capture runs on over a display reopen: its item keeps the check mark.
     if (captureFile)
         GetNewMenuItemFromID(MENU_CAPTURE)->nm_Flags |= CHECKED;
