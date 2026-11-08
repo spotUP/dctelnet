@@ -87,4 +87,11 @@ ULONG Prefs_FirstRunState(ULONG rendererBits);
  */
 void Prefs_ApplyFirstRun(struct PrefsStruct *p, ULONG rendererBits);
 
+/*
+ * Default Scrollback window height for a display of displayHeight pixels
+ * (half the display less a margin), never below WIN_MIN_HEIGHT. Safe to call
+ * before the display size is known (0): returns WIN_MIN_HEIGHT.
+ */
+WORD Prefs_DefaultScrollbackHeight(WORD displayHeight);
+
 #endif /* PREFS_FILE_H */

@@ -256,8 +256,19 @@ static void test_the_old_petscii_flag_becomes_the_petscii_terminal_type(void)
     assert(!Prefs_IsPetscii(&got));
 }
 
+/* Invariant: a Scrollback window height is always >= WIN_MIN_HEIGHT. On the first run
+ * ValidateAndInitPrefs() derives it while DisplayHeight is still 0. */
+static void test_the_default_scrollback_height_is_sane_before_the_display_is_known(void)
+{
+    assert(Prefs_DefaultScrollbackHeight(0) >= WIN_MIN_HEIGHT);
+    assert(Prefs_DefaultScrollbackHeight(0) <= DISP_MAX_HEIGHT);
+    assert(Prefs_DefaultScrollbackHeight(256) == 124);
+    assert(Prefs_DefaultScrollbackHeight(1080) == 536);
+}
+
 int main(void)
 {
+    test_the_default_scrollback_height_is_sane_before_the_display_is_known();
     test_a_v2_file_round_trips();
     test_an_older_v2_file_loads_with_the_new_fields_zero();
     test_terminal_type_is_saved_and_an_older_file_loads_automatic();
