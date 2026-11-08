@@ -10,7 +10,7 @@ CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 STACK_MAX := 400
 STACKCHK := $(shell $(CC) -Werror -Wstack-usage=$(STACK_MAX) -c -x c /dev/null -o /dev/null 2>/dev/null && echo -Wstack-usage=$(STACK_MAX))
 
-TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_renderer test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_connectaddr test_typed_send
+TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_renderer test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_connectaddr test_typed_send
 
 # The test programs are host executables, but make only compares
 # timestamps. Docker "make ci" (Linux) and "make host-ci" (macOS) share this
@@ -21,8 +21,8 @@ ifneq ($(HOST_ID),$(shell cat .host-id 2>/dev/null))
 $(shell rm -f $(TESTS) ansimusic_dump; echo '$(HOST_ID)' > .host-id)
 endif
 
-.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-debug-stack
-all: $(TESTS) check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-debug-stack
+.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack
+all: $(TESTS) check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -76,6 +76,17 @@ check-debug-stack:
 		exit 1; \
 	fi
 
+# SetLocalEchoBack() runs on SSH connect and telnet ECHO negotiation, while
+# the tool bar, packet and scrollback windows may share the main menu strip.
+# It must update the menu through SyncMenuChecks(), which clears and resets
+# the strip on every window that holds it, never through the main window alone.
+check-local-echo-menu:
+	@cd ../src && if LC_ALL=C grep --text --after-context=12 '^static void SetLocalEchoBack(BOOL wantedState)$$' DCTelnet.c | LC_ALL=C grep --text --quiet 'MenuStrip(win' \
+		|| ! LC_ALL=C grep --text --after-context=12 '^static void SetLocalEchoBack(BOOL wantedState)$$' DCTelnet.c | LC_ALL=C grep --text --quiet 'SyncMenuChecks()'; then \
+		echo "ERROR: SetLocalEchoBack must update the menu through SyncMenuChecks(), not ClearMenuStrip/ResetMenuStrip on the main window."; \
+		exit 1; \
+	fi
+
 # Parse the shipped PETSCII fonts the way diskfont.library loads them. The
 # first build put the DiskFontHeader 4 bytes late and every OpenDiskFont()
 # failed silently.
@@ -118,6 +129,9 @@ test_prefs_file: test_prefs_file.c ../src/prefs_file.c ../src/prefs_file.h ../sr
 	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
 
 test_site_prefs: test_site_prefs.c ../src/site_prefs.c ../src/site_prefs.h ../src/prefs.h ../src/prefs_file.c ../src/prefs_file.h ../src/palette.c ../src/palette.h
+	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
+
+test_menu_checks: test_menu_checks.c ../src/menu_checks.c ../src/menu_checks.h ../src/prefs.h ../src/DCTelnet.h ../src/charset.h
 	$(CC) $(CFLAGS) -Ishim -o $@ $(filter %.c,$^)
 
 test_palette: test_palette.c ../src/palette.c ../src/palette.h ../src/prefs.h ../src/prefs_file.c ../src/prefs_file.h
