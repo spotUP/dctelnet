@@ -17,9 +17,10 @@ New Features:
   first run's preferences, and text after a foreground tune waits until
   the tune has played
 - PETSCII keys: capitals, Ctrl and Commodore colour keys
-- PETSCII Mode for Commodore 64 BBSes, with the Petscii and PetsciiLower
-  fonts (Terminal menu); a character set switch changes the whole screen,
-  as on a C64
+- PETSCII Mode for Commodore 64 BBSes (Terminal menu), with the C64
+  characters built in: no font has to be installed. A character set switch
+  changes the whole screen, as on a C64. The Petscii and PetsciiLower fonts
+  are included for other programs.
 - Modern Icons tool bar (Display menu)
 - Menu check marks and local echo follow the session
 - Per-BBS settings: each Address Book entry can override four groups of
