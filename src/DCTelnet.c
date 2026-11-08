@@ -3971,13 +3971,15 @@ static void CopyRange(const struct ClipRange *r)
     if (iff) FreeVec(iff);
 }
 
-// The terminal window reports pointer moves while a selection is dragged, and
-// always while the Modern tool bar is open: the terminal keeps the focus, so
-// the bar's own window never sees the pointer cross its buttons.
+// The terminal window reports pointer moves while a selection is dragged, as the
+// host's ?1002/?1003 ask, and always while the Modern tool bar is open: the
+// terminal keeps the focus, so the bar's own window never sees the pointer
+// cross its buttons. Intuition sends no IDCMP_MOUSEMOVE without ReportMouse,
+// whatever the window's IDCMP flags say.
 static void TerminalMouseReport(void)
 {
     if (win)
-        ReportMouse((BOOL)(selDragging || ToolBarWantsHover()), win);
+        ReportMouse((BOOL)(VtReportMouseWanted(selDragging) || ToolBarWantsHover()), win);
 }
 
 static void SelectionDown(WORD mx, WORD my)
@@ -3989,7 +3991,7 @@ static void SelectionDown(WORD mx, WORD my)
     selRow = selDownRow;
     selCol = selDownCol;
     selDragging = TRUE;
-    ReportMouse(TRUE, win);
+    TerminalMouseReport();
 }
 
 static void SelectionMove(WORD mx, WORD my)
