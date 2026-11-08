@@ -70,3 +70,18 @@ BOOL ScreenFont_GlyphIsHLine(const UWORD *rows, int nrows, int width)
     }
     return nfull > 0 && nfull <= nrows / 2;
 }
+
+BOOL ScreenFont_TallPixels(UWORD resolutionX, UWORD resolutionY)
+{
+    return resolutionX != 0 && resolutionY > resolutionX;
+}
+
+UWORD ScreenFont_ToolSlotWidth(UWORD imageWidth, UWORD labelWidth)
+{
+    return labelWidth > imageWidth ? labelWidth : imageWidth;
+}
+
+WORD ScreenFont_LabelLeft(WORD iconLeft, UWORD iconWidth, UWORD labelWidth)
+{
+    return (WORD)(iconLeft + ((WORD)iconWidth - (WORD)labelWidth) / 2);
+}
