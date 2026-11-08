@@ -233,6 +233,11 @@ BOOL LoadPrefs(void)
 
         if (! ChooseScreen())
             goto clean_and_fail;
+
+        // With no prefs file the scrollback height was validated before the display height
+        // was known; derive it from the screen the user has just chosen.
+        if (userMustChooseAScreenMode)
+            prefs.ScrollbackWinHeight = Prefs_DefaultScrollbackHeight(prefs.DisplayHeight);
     }
 
 
