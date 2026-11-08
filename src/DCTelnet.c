@@ -64,6 +64,7 @@ extern struct Library *CyberGfxBase;
 #include "ticks.h"
 #include "waitfor.h"
 #include "rexxcmd.h"
+#include "typed_send.h"
 #include "rlogin.h"
 #include "sshconn.h"
 #include "connectaddr.h"
@@ -2365,26 +2366,14 @@ static void SendMisc(char *str, long len)
 // login macro). In a PETSCII session it goes out as the C64 keyboard would
 // send it (petscii_translate_text): raw ASCII capitals are lower case there,
 // so a mixed-case password failed. The caller's text is not changed.
+static void SendTypedSink(void *ctx, const char *buf, long len)
+{
+    SendMisc((char *)buf, len);
+}
+
 static void SendTyped(const char *str, long len)
 {
-    char chunk[128];
-    long n;
-
-    if (len == -1) len = (long)strlen(str);
-    if (!PETSCII_SESSION())
-    {
-        SendMisc((char *)str, len);
-        return;
-    }
-    while (len > 0)
-    {
-        n = len < (long)sizeof(chunk) ? len : (long)sizeof(chunk);
-        memcpy(chunk, str, (size_t)n);
-        petscii_translate_text(chunk, (unsigned long)n);
-        SendMisc(chunk, n);
-        str += n;
-        len -= n;
-    }
+    TypedSend_Text(PETSCII_SESSION() ? 1 : 0, str, len, SendTypedSink, NULL);
 }
 
 static void SendMacro(char *str)
@@ -3649,7 +3638,6 @@ static void RexxCommand(struct RexxMsg *msg)
     static char text[512];
     struct RexxCmd cmd;
     char status[128];
-    size_t n;
 
     if (!RexxCmd_Parse((char *)ARG0(msg), &cmd))
     {
@@ -3671,13 +3659,9 @@ static void RexxCommand(struct RexxMsg *msg)
     case REXX_SEND:
     case REXX_SENDLN:
         if (!isConnected) { RexxReply(msg, 10, NULL); return; }
-        n = RexxCmd_Unescape(cmd.arg1, text, sizeof(text) - 2);
-        if (cmd.verb == REXX_SENDLN)
-        {
-            text[n++] = '\r';
-            if (STATE_IS(APP_RETURN_SENDING_CRLF)) text[n++] = '\n';
-        }
-        SendTyped(text, (long)n);               // in PETSCII, letters as the C64 keyboard sends them
+        TypedSend_Rexx(PETSCII_SESSION() ? 1 : 0, cmd.arg1, cmd.verb == REXX_SENDLN,
+                       STATE_IS(APP_RETURN_SENDING_CRLF) ? 1 : 0,
+                       text, sizeof(text), SendTypedSink, NULL);   // PETSCII: letters as the C64 keyboard sends them
         RexxReply(msg, 0, NULL);
         return;
     case REXX_WAITFOR:
@@ -4813,13 +4797,11 @@ static void GetWindowMsg(struct Window *wwin)
                         break;
 
                     case MENU_SEND_USERNAME:
-                        SendTyped(username, -1);
-                        SendMisc("\r", 1);
+                        TypedSend_Credential(PETSCII_SESSION() ? 1 : 0, username, SendTypedSink, NULL);
                         break;
 
                     case MENU_SEND_PASSWORD:
-                        SendTyped(password, -1);
-                        SendMisc("\r", 1);
+                        TypedSend_Credential(PETSCII_SESSION() ? 1 : 0, password, SendTypedSink, NULL);
                         break;
 
                     default:
