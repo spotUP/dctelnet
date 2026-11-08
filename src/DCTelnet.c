@@ -3014,7 +3014,7 @@ int main(int argc, char *argv[])
                 // Reception of a user signal with no socket ready will cause WaitSelect() to stop
                 // and to return 0.
                 // SSH bytes already decrypted: the socket will not wake us for them
-                timeout.tv_sec = SshConn_Buffered() ? 0 : 30; timeout.tv_usec = 0;
+                timeout.tv_sec = (SshConn_Buffered() && !musicHold) ? 0 : 30; timeout.tv_usec = 0;
                 i = WaitSelect(tcpSocket + 1, &rd, 0, 0, &timeout, &sigmask);
                 MusicHoldPoll();
 
@@ -3066,7 +3066,7 @@ int main(int argc, char *argv[])
                 sigmask |= TimerSig() | RexxSig();
 
                 // SSH bytes already decrypted: the socket will not wake us for them
-                timeout.tv_sec = (SshConn_Buffered() || (STATE_IS(APP_RENDERER_BUILTIN) && VtHeldPending())) ? 0 : 30; timeout.tv_usec = 0;  // held UTF-8 prefix (MA2-14): poll, do not sleep 30 s
+                timeout.tv_sec = (!musicHold && (SshConn_Buffered() || (STATE_IS(APP_RENDERER_BUILTIN) && VtHeldPending()))) ? 0 : 30; timeout.tv_usec = 0;  // held UTF-8 prefix (MA2-14): poll, do not sleep 30 s
                 i = WaitSelect(tcpSocket + 1, &rd, 0, 0, &timeout, &sigmask);
                 MusicHoldPoll();
 
