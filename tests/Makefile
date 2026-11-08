@@ -10,7 +10,7 @@ CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 STACK_MAX := 400
 STACKCHK := $(shell $(CC) -Werror -Wstack-usage=$(STACK_MAX) -c -x c /dev/null -o /dev/null 2>/dev/null && echo -Wstack-usage=$(STACK_MAX))
 
-TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_renderer test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_connectaddr test_typed_send test_iconpens test_nearest_pen test_vtpersonality test_petscii_font
+TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_renderer test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_connectaddr test_typed_send test_iconpens test_nearest_pen test_vtpersonality test_petscii_font test_vtshadow
 
 # The test programs are host executables, but make only compares
 # timestamps. Docker "make ci" (Linux) and "make host-ci" (macOS) share this
@@ -21,8 +21,8 @@ ifneq ($(HOST_ID),$(shell cat .host-id 2>/dev/null))
 $(shell rm -f $(TESTS) ansimusic_dump; echo '$(HOST_ID)' > .host-id)
 endif
 
-.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-petscii-font-builtin check-label-gap check-font-cancel
-all: $(TESTS) check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-label-gap check-font-cancel
+.PHONY: all clean check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-petscii-font-builtin check-label-gap check-font-cancel check-welcome-kept-text
+all: $(TESTS) check-encoding check-fonts check-currenttime-null check-stack check-statics check-petscii-reopen check-local-echo-menu check-debug-stack check-icons check-ansimusic check-ssh-terminal check-petscii-termtype check-label-gap check-font-cancel check-welcome-kept-text
 	@for t in $(TESTS); do echo "--- $$t ---"; ./$$t || exit 1; done
 
 # Check the file are standard printable ASCII or ISO-8859
@@ -117,6 +117,24 @@ check-petscii-termtype:
 # beside them. Host tests cannot open a window, hence a check on the design grid.
 check-label-gap:
 	@awk -f check_label_gap.awk ../src/guis.c || { echo "ERROR: a gadget label touches its neighbour; move the gadget."; exit 1; }
+
+# A display reopen (Tool Bar, Title Bar, Full-screen) keeps the terminal's text
+# (vtKeptText, the console shadow). OpenDisplay()'s welcome screen starts with a
+# form feed that clears: it must be written only when the reopen kept nothing,
+# and displayKeptText must come from both renderers (host tests cannot link
+# DCTelnet.c).
+check-welcome-kept-text:
+	@cd ../src && if ! LC_ALL=C grep --text --quiet 'if(!isConnected && !displayKeptText)' DCTelnet.c \
+		|| ! LC_ALL=C grep --text --quiet 'displayKeptText = ShadowRestore() || (STATE_IS(APP_RENDERER_BUILTIN) && vtKeptText);' DCTelnet.c \
+		|| ! LC_ALL=C grep --text --after-context=80 'if(!isConnected && !displayKeptText)' DCTelnet.c | LC_ALL=C grep --text --quiet 'Processor: '; then \
+		echo "ERROR: DCTelnet.c OpenDisplay() must write the welcome screen only when !displayKeptText (set from ShadowRestore() and vtKeptText)."; \
+		exit 1; \
+	fi
+	@cd ../src && if ! LC_ALL=C grep --text --after-context=3 'if ((PETSCII_SESSION() != 0) != displayIsPetscii)' DCTelnet.c | LC_ALL=C grep --text --quiet 'VtClose();' \
+		|| ! LC_ALL=C grep --text --after-context=4 'if ((PETSCII_SESSION() != 0) != displayIsPetscii)' DCTelnet.c | LC_ALL=C grep --text --quiet 'Shadow_Close();'; then \
+		echo "ERROR: DCTelnet.c OpenDisplay() must drop the kept engine (VtClose) and the shadow (Shadow_Close) when the PETSCII mode changes."; \
+		exit 1; \
+	fi
 
 # Parse the shipped PETSCII fonts the way diskfont.library loads them. The
 # first build put the DiskFontHeader 4 bytes late and every OpenDiskFont()
@@ -262,11 +280,14 @@ test_vtpersonality: test_vtpersonality.c ../src/vtpersonality.c ../src/vtpersona
 test_vtinput: test_vtinput.c ../src/vtinput.c ../src/vtinput.h $(VTCON)/engine/vtengine.c
 	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim $(VTCONI) -o $@ test_vtinput.c ../src/vtinput.c $(VTCON)/engine/vtengine.c
 
+test_vtshadow: test_vtshadow.c ../src/vtshadow.c ../src/vtshadow.h ../src/ansiscan.c ../src/ansiscan.h $(VTCON)/engine/vtengine.c
+	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim $(VTCONI) -o $@ test_vtshadow.c ../src/vtshadow.c ../src/ansiscan.c $(VTCON)/engine/vtengine.c
+
 test_vtpens: test_vtpens.c ../src/vtpens.c ../src/vtpens.h $(VTCON)/engine/vtengine.c
 	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim $(VTCONI) -o $@ test_vtpens.c ../src/vtpens.c $(VTCON)/engine/vtengine.c
 
-test_glyphraster: test_glyphraster.c ../src/glyphraster.c ../src/glyphraster.h $(VTCON)/render/glyphmap.c
-	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim -I$(VTCON)/engine -I$(VTCON)/render -o $@ test_glyphraster.c ../src/glyphraster.c $(VTCON)/render/glyphmap.c
+test_glyphraster: test_glyphraster.c ../src/glyphraster.c ../src/glyphraster.h $(VTCON)/render/glyphmap.c $(VTCON)/engine/vtengine.c
+	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim -I$(VTCON)/engine -I$(VTCON)/render -o $@ test_glyphraster.c ../src/glyphraster.c $(VTCON)/render/glyphmap.c $(VTCON)/engine/vtengine.c
 
 test_term_engine: test_term_engine.c ../src/third_party/retro32-term/term-engine.c ../src/vtbuiltin.c ../src/vtpersonality.c ../src/glyphraster.c ../src/glyphraster.h ../src/screenfont.c ../src/vtpens.c ../src/vtinput.c ../src/vtinput.h \
                   $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c

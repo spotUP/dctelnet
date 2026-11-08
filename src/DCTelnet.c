@@ -93,6 +93,7 @@ extern struct Library *CyberGfxBase;
 #include "nearest_pen.h"
 #include "prefs.h"
 #include "renderer.h"
+#include "vtshadow.h"
 #include "prefs_file.h"
 #include "palette.h"
 
@@ -439,6 +440,8 @@ static void ConWrite(char *data, long len)
 {
     enum RendererRoute route = Renderer_Route(prefs.State);
 
+    if (route != ROUTE_BUILTIN)
+        Shadow_Feed((const UBYTE *)data, len);  // the console renderers' screen, kept over a reopen (vtshadow.h)
     SelectionHide();                // the text may land on it
     if (route != ROUTE_NONE)
     {
@@ -810,6 +813,12 @@ WORD GetMenuNumberFromID(enum MenuItemID id)
 // (the C64 display goes, or an entry's settings end): printed again once the
 // display is back, which clears the console. Empty = nothing to reprint.
 static char disconnectNote[96];
+
+// The last OpenDisplay() kept the terminal's text: the built-in engine drew
+// its cells again (vtKeptText) or a console renderer got its screen back from
+// the shadow. Then the welcome screen (it starts with a form feed, which
+// clears) and the disconnect notice (already among the kept text) stay out.
+static BOOL displayKeptText;
 
 static void DisConnect(char remote, char quiet)
 {
@@ -1593,6 +1602,22 @@ static void TerminalGrid(UWORD *cols, UWORD *rows)
     ScreenFont_Grid(win->Width, win->Height, win->GZZWidth, win->GZZHeight,
                     (win->Flags & WFLG_GIMMEZEROZERO) != 0,
                     cell->tf_XSize, cell->tf_YSize, cols, rows);
+}
+
+static void ShadowWrite(void *user, const char *data, long len)
+{
+    ConWrite((char *)data, len);
+}
+
+/* A display or console unit (re)opened: hand the renderer and the grid to the
+ * shadow (vtshadow.h). console.device / ibmcon.device get their screen back;
+ * Built-in and XEM free it. */
+static BOOL ShadowRestore(void)
+{
+    UWORD cols, rows;
+
+    TerminalGrid(&cols, &rows);
+    return Shadow_DisplayOpened(Renderer_Route(prefs.State), cols, rows, ShadowWrite, NULL);
 }
 
 // The columns BBS art is drawn for in this font: 40 in the C64 fonts, 132
@@ -3144,10 +3169,12 @@ int main(int argc, char *argv[])
                 shouldReopenConsole = FALSE;    // the full reopen covered it
             }
 
-            // A disconnect that reopened the display: its notice again.
+            // A disconnect that reopened the display: its notice again, unless
+            // the reopen kept the text it was printed into.
             if (disconnectNote[0] && !shouldRestart && !shouldReopenConsole && !isConnected)
             {
-                LocalPrint(disconnectNote);
+                if (!displayKeptText)
+                    LocalPrint(disconnectNote);
                 disconnectNote[0] = 0;
             }
 
@@ -3171,6 +3198,7 @@ clean_exit:
     CaptureStop();                  // the capture file is complete
     CloseDisplay(TRUE);
     VtClose();                      // the built-in terminal outlives display reopens, not the program
+    Shadow_Close();                 // so does the console renderers' shadow screen
 
     ClearScrollBack();
     FreeMem(scrollbackList, sizeof(struct List));
@@ -4559,8 +4587,7 @@ static void GetWindowMsg(struct Window *wwin)
 
                     case MENU_SCROLLBACK:
                         UpdatePrefsFromMenu(item, APP_SCROLLBACK_ENABLED);
-                        // the built-in terminal sizes its scrollback at vt_new(): full reopen
-                        if (Renderer_Route(prefs.State) == ROUTE_BUILTIN) shouldRestart = TRUE;
+                        VtApplyScrollback();    // the built-in terminal's, in place: its text stays
                         break;
 
                     case MENU_PACKET_WINDOW:
@@ -4897,7 +4924,7 @@ static void GetWindowMsg(struct Window *wwin)
                     case MENU_SCROLLBACK_LINES:
                         InitializeReqToolsLib(reqtoolsTags);
                         rtGetLongA(&prefs.nScrollbackLines, "ScrollBack Lines..", NULL, (struct TagItem *)&reqtoolsTags);
-                        if (Renderer_Route(prefs.State) == ROUTE_BUILTIN && STATE_IS(APP_SCROLLBACK_ENABLED)) shouldRestart = TRUE;
+                        VtApplyScrollback();    // the built-in terminal's, in place: its text stays
                         break;
 
                     case MENU_SNAPSHOT_WINDOWS:
@@ -5591,6 +5618,7 @@ static void ReopenTerminal(void)
     }
     if (displayIsPetscii)
         ConWrite(PETSCII_CONSOLE_SETUP, sizeof(PETSCII_CONSOLE_SETUP) - 1);
+    ShadowRestore();                // the new unit is empty: the text comes back
     // The grid changed with the font: tell the BBS (on the Workbench the
     // window's resize does it too, on the own screen nothing else would).
     if (isConnected)
@@ -6140,6 +6168,18 @@ BOOL OpenDisplay(void)
         PutStr("--> OpenDisplay()\n");
     #endif
 
+    // Kept text is valid only in the display mode it was written in. When the
+    // PETSCII mode changes (an Address Book entry starts or ends: C64 font and
+    // personality against the ANSI ones) the reopen starts from a blank
+    // terminal: no kept engine below (VtClose), no console shadow replay
+    // (Shadow_Close), so displayKeptText is FALSE and the welcome screen shows.
+    // displayIsPetscii still holds the mode of the display being replaced.
+    if ((PETSCII_SESSION() != 0) != displayIsPetscii)
+    {
+        VtClose();
+        Shadow_Close();
+    }
+
     if (scr == NULL)  // We need to (re)open completely the screen
         scr = OpenAppScreen();
 
@@ -6242,10 +6282,14 @@ BOOL OpenDisplay(void)
     /* After isAppIconified is cleared: ConWrite() drops writes while it is set. */
     if (isConDeviceOpened && displayIsPetscii)
         ConWrite(PETSCII_CONSOLE_SETUP, sizeof(PETSCII_CONSOLE_SETUP) - 1);
+    // A console renderer's new unit is empty: the text comes back.
+    displayKeptText = ShadowRestore() || (STATE_IS(APP_RENDERER_BUILTIN) && vtKeptText);
 
     LEDs();
 
-    if(!isConnected)
+    // The welcome screen, on a blank terminal only: its form feed would clear
+    // the text a reopen (Tool Bar, Title Bar, Full-screen...) just kept.
+    if(!isConnected && !displayKeptText)
     {
         STRPTR strRenderer = NULL;
         register ULONG flags = SysBase->AttnFlags;

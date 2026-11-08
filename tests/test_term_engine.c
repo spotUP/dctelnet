@@ -432,13 +432,11 @@ static void test_vtopen_twice_never_draws_through_the_previous_engine(void)
     assert(term_init_area(&screen, &winRp, 0, TOP, 0, TOP, W, H - TOP, &font) == 0);
     assert(VtOpen() == 0);
     assert(vtTerm != NULL);
+    VtClose();
+    assert(vtTerm == NULL);
     newCalls = 0;
-    /* a new scrollback size is the one reopen that needs a new engine */
-    prefs.State |= APP_SCROLLBACK_ENABLED;
-    prefs.nScrollbackLines = 100;
-    assert(VtOpen() == 0);
-    assert(newSb == 100);
-    assert(newCalls == 1 && newSawTerm == 0);   /* the previous engine was closed first */
+    assert(VtOpen() == 0);                      /* no engine: the one open that makes one */
+    assert(newCalls == 1 && newSawTerm == 0);
     assert(vtTerm != NULL);
     VtClose();
     assert(vtTerm == NULL);
@@ -650,6 +648,7 @@ static void test_a_display_reopen_keeps_the_text_and_draws_it_again(void)
     char line[8];
 
     vt_begin();
+    assert(!vtKeptText);                    /* a first open: blank, OpenDisplay() may welcome */
     vt_put("HELLO\r\nBBS");
     VtReleasePens();                        /* CloseConsoleDevice() in CloseDisplay() */
     /* the reopened window: 16 pixels lower and shorter, two rows fewer */
@@ -658,6 +657,7 @@ static void test_a_display_reopen_keeps_the_text_and_draws_it_again(void)
     probes = 0;
     assert(VtOpen() == 0);
     assert(newCalls == 0);                  /* the same engine, not a blank one */
+    assert(vtKeptText);                     /* so OpenDisplay() writes no clearing welcome screen */
     assert(vt_rows(vtTerm) == term_rows && vt_cols(vtTerm) == term_cols);
     row = vt_row(vtTerm, 0, &n);
     for (i = 0; i < 5; i++) line[i] = (char)row[i].ch;
@@ -671,6 +671,28 @@ static void test_a_display_reopen_keeps_the_text_and_draws_it_again(void)
         else if (probe[i].y == 1 && probe[i].x == 2 && probe[i].code == 'S') seen |= 2;
     assert(seen == 3);
     expect_cursor(3, 1);
+    VtClose();
+}
+
+/* A reopen in another display mode (PETSCII entry ends, or starts): OpenDisplay()
+ * drops the engine with VtClose() first, so VtOpen() makes a blank one and the
+ * welcome screen shows. A reopen in the same mode keeps (test above). */
+static void test_a_reopen_in_another_display_mode_starts_blank(void)
+{
+    const vt_cell *row;
+    int n;
+
+    vt_begin();
+    vt_put("C64 TEXT");
+    VtReleasePens();
+    VtClose();                              /* OpenDisplay(): the mode changed */
+    assert(term_init_area(&screen, &winRp, 0, TOP, 0, TOP, W, H - TOP, &font) == 0);
+    newCalls = 0;
+    assert(VtOpen() == 0);
+    assert(newCalls == 1);                  /* a blank engine */
+    assert(!vtKeptText);                    /* so the welcome screen is written */
+    row = vt_row(vtTerm, 0, &n);
+    assert(row[0].ch == 0 || row[0].ch == ' ');
     VtClose();
 }
 
@@ -1357,14 +1379,52 @@ static void test_ma4_2_long_art_fills_the_engine_scrollback_and_only_when_asked(
     assert(newSb == 0);
     VtClose();
 
-    /* the preference is read at every VtOpen: the full reopen DCTelnet does on a toggle */
+    /* the preference is read at every VtOpen (a display reopen) and on the menu
+     * toggle (VtApplyScrollback): the live engine takes the new size */
     sb_begin(APP_SCROLLBACK_ENABLED, 40);
     assert(newSb == 40);
+    newCalls = 0;
     prefs.State = 0;
-    assert(VtOpen() == 0 && newSb == 0);
+    assert(VtOpen() == 0 && vtTermSb == 0);
     prefs.State = APP_SCROLLBACK_ENABLED;
     prefs.nScrollbackLines = 100000UL;
-    assert(VtOpen() == 0 && newSb == 32767);                              /* clamped to the engine's int */
+    VtApplyScrollback();
+    assert(vtTermSb == 32767);                                           /* clamped to the engine's int */
+    assert(newCalls == 0);
+    VtClose();
+}
+
+/* A1200, built-in renderer, connected: Settings > ScrollBack Lines.. (or the
+ * ScrollBack toggle) made a new engine (VtOpen after a full reopen): the
+ * screen and the scrollback were gone. The live engine takes the new size in
+ * place: the screen stays, and the newest scrollback lines that fit. */
+static void test_a_scrollback_size_change_keeps_the_screen_and_the_newest_lines(void)
+{
+    const vt_cell *r;
+    int n;
+
+    sb_begin(APP_SCROLLBACK_ENABLED, 500);
+    sb_art(SB_ART_ROWS);                                                 /* grid L171..L200, 170 back */
+    VtScrollView(5);                                                     /* the user is looking back */
+    newCalls = 0;
+    prefs.nScrollbackLines = 40;                                         /* ScrollBack Lines.. */
+    VtApplyScrollback();
+    assert(newCalls == 0);                                               /* the same engine */
+    assert(vtScrollOff == 0);                                            /* back on the live grid */
+    assert(vt_scrollback_lines(vtTerm) == 40);
+    r = vt_row(vtTerm, 0, &n);                                           /* the screen: still L171 */
+    assert(r && r[1].ch == '1' && r[2].ch == '7' && r[3].ch == '1');
+    r = vt_row(vtTerm, -40, &n);                                         /* the oldest kept: L131 */
+    assert(r && r[1].ch == '1' && r[2].ch == '3' && r[3].ch == '1');
+
+    /* the same through a display reopen (VtOpen): grows back, the lines stay */
+    VtReleasePens();
+    prefs.nScrollbackLines = 300;
+    assert(VtOpen() == 0);
+    assert(newCalls == 0 && vtTermSb == 300);
+    assert(vt_scrollback_lines(vtTerm) == 40);
+    r = vt_row(vtTerm, 0, &n);
+    assert(r && r[1].ch == '1' && r[2].ch == '7' && r[3].ch == '1');
     VtClose();
 }
 
@@ -1519,6 +1579,7 @@ int main(void)
     test_a_16_pixel_font_gives_40_columns();
     test_vtopen_twice_never_draws_through_the_previous_engine();
     test_a_display_reopen_keeps_the_text_and_draws_it_again();
+    test_a_reopen_in_another_display_mode_starts_blank();
     test_a_menu_cannot_open_while_the_terminal_draws_into_the_bitmap();
     test_a_menu_open_over_the_terminal_is_drawn_around();
     test_a_menu_opened_while_an_answer_is_sent_is_drawn_around();
@@ -1551,6 +1612,7 @@ int main(void)
     test_ma3_6_motion_modes_and_the_mouse_move_flag();
     test_any_motion_mode_turns_report_mouse_on_without_a_drag();
     test_ma4_2_long_art_fills_the_engine_scrollback_and_only_when_asked();
+    test_a_scrollback_size_change_keeps_the_screen_and_the_newest_lines();
     test_ma4_3_shift_page_up_draws_the_previous_page_and_page_down_returns();
     test_ma4_3_a_scrollback_line_narrower_than_the_grid_is_blank_filled();
     test_ma4_4_the_alt_screen_leaves_the_scrollback_alone();
