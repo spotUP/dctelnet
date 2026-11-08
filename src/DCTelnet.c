@@ -165,15 +165,15 @@ static struct NewMenu mainMenuDesc[] =
     {    NM_ITEM, "Rlogin",                          0 , HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_RLOGIN},
     {    NM_ITEM, "SSH",                             0 , HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_SSH},
 //  {    NM_ITEM, "Convert incoming LF to CRLF",    "L", HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_INCOMING_LF_TO_CRLF},
-    {    NM_ITEM, "PETSCII Mode",                    0 , HIGHCOMP|CHECKIT|MENUTOGGLE, 0, (APTR)MENU_PETSCII_MODE},
     {    NM_ITEM, "Character Set",                   0 ,             0,               0, (APTR)MENU_CHARSET},
     {       NM_SUB, "IBM PC (CP437)",                0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_CHARSET_CP437},
     {       NM_SUB, "Amiga (ISO-8859-1)",            0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_CHARSET_LATIN1},
     {       NM_SUB, "UTF-8",                         0 ,       CHECKIT,       ~4L & 7, (APTR)MENU_CHARSET_UTF8},
     {    NM_ITEM, "Terminal Type",                   0 ,             0,               0, (APTR)MENU_TERMTYPE},
-    {       NM_SUB, "Automatic",                     0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_TERMTYPE_AUTO},
-    {       NM_SUB, "BBS",                           0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_TERMTYPE_BBS},
-    {       NM_SUB, "Unix",                          0 ,       CHECKIT,       ~4L & 7, (APTR)MENU_TERMTYPE_UNIX},
+    {       NM_SUB, "Automatic",                     0 ,       CHECKIT,       ~1L & 15, (APTR)MENU_TERMTYPE_AUTO},
+    {       NM_SUB, "BBS",                           0 ,       CHECKIT,       ~2L & 15, (APTR)MENU_TERMTYPE_BBS},
+    {       NM_SUB, "Unix",                          0 ,       CHECKIT,       ~4L & 15, (APTR)MENU_TERMTYPE_UNIX},
+    {       NM_SUB, "PETSCII",                       0 ,       CHECKIT,       ~8L & 15, (APTR)MENU_TERMTYPE_PETSCII},
     {    NM_ITEM, "Bell",                            0 ,             0,               0, (APTR)MENU_BELL},
     {       NM_SUB, "Flash",                         0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_BELL_FLASH},
     {       NM_SUB, "Sound",                         0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_BELL_SOUND},
@@ -284,7 +284,7 @@ static struct TextFont *petsciiFont = NULL;      // upper/graphics charset font
 static struct TextFont *petsciiFontLower = NULL; // shifted/lowercase charset font
 // PETSCII only makes sense in a PETSCII BBS session: the C64 fonts and console
 // setup are up only while a connection is being made or live (connectionDisplay)
-// with PETSCII Mode on. Start-up and disconnected text keep the normal font.
+// with Terminal Type PETSCII. Start-up and disconnected text keep the normal font.
 static BOOL connectionDisplay = FALSE;   // a connection is being prepared or is live
 // The Workbench window's place when the display was last closed: a reopen
 // (an entry's settings, a font change) keeps it. The saved place
@@ -299,7 +299,7 @@ static BOOL wbWindowBoxValid = FALSE;
 static const char *consoleFrom = "the system";   // where ibmcon.device came from
 static char fontMissing[48];    // the font setting that could not be opened ("" = none)
 static BOOL displayIsPetscii = FALSE;    // the display was opened for PETSCII
-#define PETSCII_SESSION() (connectionDisplay && STATE_IS(APP_PETSCII_MODE))
+#define PETSCII_SESSION() (connectionDisplay && Prefs_IsPetscii(&prefs))
 // 32+ colours with ibmcon.device: the 16 ANSI colours get pens of their own
 // (Palette_AnsiPens), handed to ibmcon with IBMCMD_SETPENS; the UI keeps
 // Intuition's pens 0-7. On the Workbench they are 16 shared pens (V39).
@@ -979,7 +979,7 @@ static void ScheduleKeepAlive(void)
 }
 
 // Reopen the display when the C64 display it shows no longer matches what
-// the connection state and PETSCII Mode want.
+// the connection state and Terminal Type PETSCII want.
 static void SyncPetsciiDisplay(void)
 {
     if ((PETSCII_SESSION() != 0) != displayIsPetscii)
@@ -1351,7 +1351,7 @@ static void RunPendingConnect(void)
             TerminalSize(&cols, &rows);
             if (!SshConn_Start(pendingConnect.host, pendingConnect.port,
                                pendingConnect.username, pendingConnect.password,
-                               PETSCII_SESSION() ? "PETSCII" : Vt_SshTermName(&prefs),
+                               Vt_SshTermName(&prefs),
                                cols, rows))
             {
                 DisConnect(FALSE, TRUE);
@@ -1363,7 +1363,7 @@ static void RunPendingConnect(void)
         {
             char hello[160];
             size_t n = Rlogin_Handshake(pendingConnect.username, pendingConnect.password,
-                                        PETSCII_SESSION() ? "PETSCII" : (const char *)prefs.TelnetTermType,
+                                        Prefs_TelnetTermName(&prefs),
                                         "38400", hello, sizeof(hello));
             if (n) TCPSend(hello, (long)n);
             rloginAckPending = TRUE;
@@ -1656,7 +1656,7 @@ static void ApplyTerminalWidth(void)
 
 /**
  * @brief Keep the terminal at most ArtColumns() text columns wide (80, 132
- *        with Display > 132 Columns, 40 in PETSCII Mode): BBS art is drawn
+ *        with Display > 132 Columns, 40 with Terminal Type PETSCII): BBS art is drawn
  *        for exactly that width and wraps at its edge. A Workbench window
  *        stops there (WindowLimits); on DCTelnet's own screen the window is
  *        that wide and centred, the screen's background around it ANSI black
@@ -2512,7 +2512,7 @@ cont:
                 }
                 break;
             default:
-norm:                // Typed text in PETSCII Mode goes out case-swapped (petscii_keymap);
+norm:                // Typed text with Terminal Type PETSCII goes out case-swapped (petscii_keymap);
                 // a macro's text is typed text too. Escapes (\r, \123) stay raw.
                 buf[j] = PETSCII_SESSION()
                          ? (char)petscii_translate_key((unsigned char)str[i], 0) : str[i];
@@ -2720,7 +2720,7 @@ static void Finger(void)
         // End any entry session (and its connection) BEFORE touching the
         // flag: ending it later, inside the connect, would restore the
         // global settings over APP_RAW_CONNECTION.
-        // Finger is plain text: no C64 display, whatever PETSCII Mode says.
+        // Finger is plain text: no C64 display, whatever the Terminal Type says.
         if (isConnected) DisConnect(FALSE, FALSE);
         EndEntrySession();
         if (shouldRestart || shouldReopenConsole)
@@ -2913,7 +2913,7 @@ int main(int argc, char *argv[])
     shouldReopenScreen = FALSE;
 
     // Connect to server if it was specified in the command line. It needs an opened display,
-    // and in PETSCII Mode the C64 one: the main loop reopens it, then connects.
+    // and with Terminal Type PETSCII the C64 one: the main loop reopens it, then connects.
     if (server[0] != '\0')
     {
         if (stricmp(server, "--test-speed") == 0)
@@ -3096,7 +3096,7 @@ int main(int argc, char *argv[])
                 sig |= TimerSig() | RexxSig();
 
                 // A display reopen or a connect already queued (an entry's
-                // settings, PETSCII Mode) runs now, not after the next event.
+                // settings, Terminal Type) runs now, not after the next event.
                 if (shouldRestart || shouldReopenConsole || pendingConnect.active)
                     sigmask = SetSignal(0L, sig | winsig | SIGBREAKF_CTRL_C)
                             & (sig | winsig | SIGBREAKF_CTRL_C);
@@ -3616,7 +3616,7 @@ static void OutKey(unsigned char key)
         EchoWrite(&key, 1);
 }
 
-// One byte of typed text. In PETSCII Mode: BS and DEL are PETSCII's own DEL
+// One byte of typed text. With Terminal Type PETSCII: BS and DEL are PETSCII's own DEL
 // (APP_BACKSPACE_DEL_SWAPPED is an ASCII-only concept), the rest case-swapped.
 static void SendTypedChar(UBYTE c)
 {
@@ -3638,7 +3638,7 @@ static void SendTypedChar(UBYTE c)
     if (c == '\r' && STATE_IS(APP_RETURN_SENDING_CRLF)) OutKey('\n');
 }
 
-// A key that is not text (keys.h). F1-F10 send their macro; in PETSCII Mode
+// A key that is not text (keys.h). F1-F10 send their macro; with Terminal Type PETSCII
 // a key without one sends the C64 function-key byte (F1-F8). Cursor and
 // navigation keys send what the BBS expects: PETSCII codes, or ANSI-BBS /
 // VT codes (Terminal > VT Keys), cursor keys in the host's cursor key mode.
@@ -4637,11 +4637,19 @@ static void GetWindowMsg(struct Window *wwin)
                     case MENU_TERMTYPE_AUTO:
                     case MENU_TERMTYPE_BBS:
                     case MENU_TERMTYPE_UNIX:
+                    case MENU_TERMTYPE_PETSCII:
                         prefs.TermType = (UBYTE)((ULONG)GTMENUITEM_USERDATA(item) - MENU_TERMTYPE_AUTO);
                         Charset_Utf8Init(&utf8In);
                         Charset_Utf8Init(&utf8Echo);
                         Charset_Utf8Init(&utf8Sb);
                         VtApplyPersonality();
+                        if (Prefs_IsPetscii(&prefs))
+                            petscii_dispatch_init(&g_petsciiState, 40, 25);
+                        /* The C64 display is up only during a connection. Changed
+                         * while connected, the display reopens (the console fixes its
+                         * cell size at OpenDevice() time, as for MENU_SCREEN_FONT);
+                         * changed while disconnected, nothing visible changes. */
+                        SyncPetsciiDisplay();
                         break;
 
                     case MENU_COPY:
@@ -4790,16 +4798,6 @@ static void GetWindowMsg(struct Window *wwin)
                             shouldRestart = TRUE;
                         }
                     break;
-
-                    case MENU_PETSCII_MODE:
-                        UpdatePrefsFromMenu(item, APP_PETSCII_MODE);
-                        petscii_dispatch_init(&g_petsciiState, 40, 25);
-                        /* The C64 display is up only during a connection. Toggled
-                         * while connected, the display reopens (the console fixes its
-                         * cell size at OpenDevice() time, as for MENU_SCREEN_FONT);
-                         * toggled while disconnected, nothing visible changes. */
-                        SyncPetsciiDisplay();
-                        break;
 
                     case MENU_SCREEN_MODE:
                         oldDispID = prefs.DisplayID;
@@ -5209,7 +5207,7 @@ static UWORD EstablishTCPConnection(char *servername, UWORD port)
      * every printable byte "wrapped" and got its own line. */
     petscii_dispatch_init(&g_petsciiState, 40, 25);
     if (PETSCII_SESSION() && !petsciiFont)
-        LocalPrint("\r\nPETSCII Mode: Petscii.font not found in FONTS: or PROGDIR:Fonts/, "
+        LocalPrint("\r\nPETSCII: Petscii.font not found in FONTS: or PROGDIR:Fonts/, "
                    "showing CP437 lookalikes.\r\n");
 
     Dsr_Init(&bbsDsr);      // a request cut off by the last disconnect is not this BBS's
@@ -5802,7 +5800,7 @@ void OpenAppWindow(void)
 
         {
             // No snapshot and not a reopen: the BBS size, 80x25 characters
-            // (40x25 in PETSCII Mode) of the terminal's font, on any mode.
+            // (40x25 with Terminal Type PETSCII) of the terminal's font, on any mode.
             struct TextFont *cell = petsciiFont ? petsciiFont : ansiFont;
             BOOL bbsSize = !wbWindowBoxValid && STATE_IS_NOT(APP_WINDOW_SNAPSHOT);
 
@@ -6012,6 +6010,7 @@ void CreateAppMenus(void)
     GetNewMenuItemFromID(MENU_TERMTYPE_AUTO)->nm_Flags = CHECKIT | (prefs.TermType == TERMTYPE_AUTO ? CHECKED : 0);
     GetNewMenuItemFromID(MENU_TERMTYPE_BBS)->nm_Flags  = CHECKIT | (prefs.TermType == TERMTYPE_BBS ? CHECKED : 0);
     GetNewMenuItemFromID(MENU_TERMTYPE_UNIX)->nm_Flags = CHECKIT | (prefs.TermType == TERMTYPE_UNIX ? CHECKED : 0);
+    GetNewMenuItemFromID(MENU_TERMTYPE_PETSCII)->nm_Flags = CHECKIT | (Prefs_IsPetscii(&prefs) ? CHECKED : 0);
     GetNewMenuItemFromID(MENU_ICE_COLOURS)->nm_Flags = HIGHCOMP | CHECKIT | MENUTOGGLE | (prefs.Blink == BLINK_ICE ? CHECKED : 0);
 
     // A capture runs on over a display reopen: its item keeps the check mark.

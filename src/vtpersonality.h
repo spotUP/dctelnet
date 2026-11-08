@@ -13,7 +13,8 @@ struct VtPersonality {
     enum vt_charset charset;
 };
 
-/* Terminal Type (prefs.TermType) decides the personality: BBS is the IBM PC
+/* Terminal Type (prefs.TermType) decides the personality: PETSCII counts as BBS
+ * (the C64 display takes the bytes before the engine), BBS is the IBM PC
  * ANSI.SYS terminal, Unix is xterm, Automatic takes xterm for Character Set
  * UTF-8 and the PC terminal for anything else. PC ANSI reads CP437 (a Latin-1
  * site gets its bytes through unchanged, the font decides the look); xterm
