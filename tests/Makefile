@@ -112,12 +112,12 @@ check-ssh-terminal:
 
 # PETSCII is a Terminal Type. The old State bit (APP_OLD_PETSCII_MODE) is read
 # only by the migration in prefs_file.c; every other test of "is this PETSCII"
-# goes through Prefs_IsPetscii, the View menu checks the PETSCII item from it,
+# goes through Prefs_IsPetscii, the View menu check in menu_checks.c reads it,
 # and the old menu item and settings checkbox are gone.
 check-petscii-termtype:
 	@cd ../src && if LC_ALL=C grep -aqE 'APP_PETSCII_MODE|MENU_PETSCII_MODE|SG_TERM_PETSCII' *.c *.h \
 		|| LC_ALL=C grep -alE 'APP_OLD_PETSCII_MODE' *.c *.h | LC_ALL=C grep -qvxE 'prefs\.h|prefs_file\.[ch]' \
-		|| ! LC_ALL=C grep -a 'MENU_TERMTYPE_PETSCII' DCTelnet.c | LC_ALL=C grep -aq 'Prefs_IsPetscii(&prefs)' \
+		|| ! LC_ALL=C grep -a 'MENU_TERMTYPE_PETSCII' menu_checks.c | LC_ALL=C grep -aq 'Prefs_IsPetscii(p)' \
 		|| ! LC_ALL=C grep -a 'define PETSCII_SESSION' DCTelnet.c | LC_ALL=C grep -aq 'Prefs_IsPetscii'; then \
 		echo "ERROR: PETSCII must be read through Prefs_IsPetscii; APP_OLD_PETSCII_MODE only in prefs.h, prefs_file.c and prefs_file.h; the old menu item and checkbox must stay gone."; \
 		exit 1; \
