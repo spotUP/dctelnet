@@ -26,6 +26,7 @@
 #include "vtpens.h"
 #include "vtinput.h"
 #include "glyphraster.h"
+#include "site_prefs.h"
 #include "screenfont.h"
 
 /* The glyph for a code point the font cannot show: the font's '?', one cell. */
@@ -512,9 +513,9 @@ static void VtApplyRip(void)
  * reset) or the session ending (VtRipEnd) puts back what was there. The reopen
  * goes through VtRipScreenChanged -> RequestDisplayReopen, the path a screen
  * mode or font change takes. The saved settings are the live prefs before the
- * switch; the RIP ones are never written to the prefs file (SavePrefs writes
- * globalPrefs only during an entry session; a quick connect has no such copy:
- * see VtRipEnd's callers). */
+ * switch; the RIP ones are never written to the prefs file: the switch is
+ * recorded in handChanges (a hand change while connected), which SavePrefs
+ * takes back in a quick connect as in an entry session. */
 static BOOL vtRipSeen;                  /* the switch is in force */
 static struct PrefsStruct vtRipSaved;   /* the settings it replaced */
 
@@ -560,6 +561,10 @@ static void VtRipWatch(void)
             prefs.DisplayDepth = 4;
         }
     }
+    /* A temporary change like one made by hand while connected: it applies for
+     * the run and SavePrefs takes it back (site_prefs.c), in a quick connect
+     * too, where the live prefs are what gets saved. Switching back undoes it. */
+    SitePrefs_CarryChange(&handChanges.after, &before, &prefs);
     VtRipScreenChanged(&before);
 }
 

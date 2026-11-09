@@ -290,6 +290,9 @@ static void VtRipScreenChanged(const struct PrefsStruct *before)
     ripReopenDisplayID = prefs.DisplayID;
     ripReopenRenderer = prefs.State & APP_RENDERER_ALL;
 }
+#include "site_prefs.h"
+struct SiteHandChanges handChanges;     /* DCTelnet.c's record of temporary changes */
+ULONG sessionSettingsId;                /* 0: a quick connect, no entry session */
 #include "../src/vtbuiltin.c"
 #undef term_glyph
 #undef vt_new
@@ -1951,6 +1954,44 @@ static void test_rip_h4_the_screen_switch_is_wired_through_the_data_path(void)
     prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_BUILTIN;
 }
 
+/* The RIP switch is temporary for the run: in a quick connect (no entry
+ * session) the live prefs are what SavePrefs writes, so what it would save
+ * must still be the pre-RIP screen and renderer while RIP is active. */
+static void test_rip_h4_the_screen_switch_never_reaches_the_prefs_file(void)
+{
+    const ULONG siteMode = 0x29000UL, appMode = 0x11000UL;
+    static struct PrefsStruct toSave;
+
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    VtRipEnd();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    prefs.DisplayID = appMode; prefs.DisplayWidth = 800; prefs.DisplayHeight = 600; prefs.DisplayDepth = 8;
+    prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_CONSOLE_DEVICE;
+    prefs.RipScreen = RIPSCREEN_MODE;
+    prefs.RipDisplayID = siteMode; prefs.RipWidth = 640; prefs.RipHeight = 480;
+    sessionSettingsId = 0;
+    SitePrefs_HandInit(&handChanges, &prefs);
+    ripReopens = 0;
+
+    vt_put("\033[!");
+    assert(ripReopens == 1 && prefs.DisplayID == siteMode);     /* the sentinel: the switch ran */
+    SitePrefs_ForSave(&toSave, &prefs, &prefs, FALSE);          /* SavePrefs, quick connect */
+    SitePrefs_HandForSave(&handChanges, &toSave);
+    assert(toSave.DisplayID == appMode);
+    assert(toSave.DisplayWidth == 800 && toSave.DisplayHeight == 600 && toSave.DisplayDepth == 8);
+    assert((toSave.State & APP_RENDERER_ALL) == APP_RENDERER_CONSOLE_DEVICE);
+
+    vt_put("\033[1!");                                          /* RIP off: nothing left to take back */
+    assert(prefs.DisplayID == appMode);
+    SitePrefs_ForSave(&toSave, &prefs, &prefs, FALSE);
+    SitePrefs_HandForSave(&handChanges, &toSave);
+    assert(toSave.DisplayID == appMode && memcmp(&toSave, &prefs, sizeof(toSave)) == 0);
+    prefs.RipScreen = RIPSCREEN_DEFAULT;
+    prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_BUILTIN;
+}
+
 int main(void)
 {
     test_the_terminal_starts_below_the_title_bar_and_matches_the_window_rows();
@@ -2009,6 +2050,7 @@ int main(void)
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
     test_rip_fonts_preference_reaches_the_engine();
     test_rip_h4_the_screen_switch_is_wired_through_the_data_path();
+    test_rip_h4_the_screen_switch_never_reaches_the_prefs_file();
     printf("term_engine: all assertions passed\n");
     return 0;
 }
