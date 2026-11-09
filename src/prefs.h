@@ -188,7 +188,8 @@ struct PrefsStruct
 #define RIPMODE_AUTO 0      // RIP graphics when the host sends ESC[! or a valid !| line
 #define RIPMODE_OFF  1      // every byte is text
 #define RIPMODE_ON   2      // RIP graphics from the start
-#define Prefs_RipEnabled(p) ((p)->RipMode != RIPMODE_OFF)
+// vt_set_rip's mode: 0 off, 1 on (active at once), 2 auto (active on ESC[! or a valid !| line)
+#define Prefs_RipEngineMode(p) ((p)->RipMode == RIPMODE_OFF ? 0 : (p)->RipMode == RIPMODE_ON ? 1 : 2)
 
 // The one predicate for PETSCII (was the State flag APP_OLD_PETSCII_MODE).
 #define Prefs_IsPetscii(p) ((p)->TermType == TERMTYPE_PETSCII)

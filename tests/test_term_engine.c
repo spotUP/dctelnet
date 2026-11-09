@@ -1818,6 +1818,32 @@ static void test_rip_h3_the_ripscrip_preference_reaches_the_engine(void)
     rip_h3_feed_with(RIPMODE_AUTO, &images, &cmds);     /* the default; the engine treats a valid line as RIP */
     assert(images == 1 && cmds >= 2);
 
+    /* Auto stays text until the host speaks RIP; On is active at once */
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    prefs.RipMode = RIPMODE_OFF;                        /* a fresh adapter: On -> Auto keeps the engine active */
+    VtApplyRip();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    assert(vt_rip_active(vtTerm) == 0);
+    vt_put("plain text\r\n");
+    assert(vt_rip_active(vtTerm) == 0 && vt_images(vtTerm) == 0);
+    vt_put("\033[!");
+    assert(vt_rip_active(vtTerm) == 1);
+    vt_put(ripLine);
+    assert(vt_images(vtTerm) == 1);
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    assert(vt_rip_active(vtTerm) == 1);
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    prefs.RipMode = RIPMODE_OFF;
+    VtApplyRip();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    vt_put(ripLine);                                    /* a valid !| line also starts Auto */
+    assert(vt_rip_active(vtTerm) == 1 && vt_images(vtTerm) == 1);
+
     prefs.RipMode = RIPMODE_OFF;                        /* changed while connected */
     VtApplyRip();
     assert(vt_rip_commands(vtTerm) == 0);               /* the adapter is gone: the next RIP line stays text */

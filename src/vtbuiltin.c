@@ -494,13 +494,13 @@ static void VtApplyPersonality(void)
 }
 
 /* RIPscrip (Terminal > RIPscrip, prefs.RipMode): at open, when the menu or a
- * site changes it. The engine has two states: 0 is plain text, 1 installs the
- * RIP adapter, which answers ESC[! and draws the !| lines (a line that is not
- * RIP stays text). Auto and On both map to 1; Off to 0, which drops a canvas. */
+ * site changes it. The engine modes: 0 is plain text (drops a canvas), 1 is RIP
+ * active at once, 2 is Auto: plain text until the host sends ESC[! or a valid
+ * !| line (vt_rip_active tells). Auto -> 2, On -> 1, Off -> 0. */
 static void VtApplyRip(void)
 {
     if (vtTerm)
-        vt_set_rip(vtTerm, Prefs_RipEnabled(&prefs) ? 1 : 0);
+        vt_set_rip(vtTerm, Prefs_RipEngineMode(&prefs));
 }
 
 static void VtSniffReset(void)
