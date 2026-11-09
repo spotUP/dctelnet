@@ -185,6 +185,21 @@ void Prefs_ApplyFirstRun(struct PrefsStruct *p, ULONG rendererBits)
     p->AnsiMusic = 1;
 }
 
+BOOL Prefs_FirstRunScreen(struct PrefsStruct *p, BOOL (*ask)(void))
+{
+    ULONG id = p->DisplayID;
+    UWORD w = p->DisplayWidth, h = p->DisplayHeight, d = p->DisplayDepth;
+
+    if (!ask())
+    {
+        p->DisplayID = id;
+        p->DisplayWidth = w;
+        p->DisplayHeight = h;
+        p->DisplayDepth = d;
+    }
+    return Prefs_ScreenFits(p);
+}
+
 BOOL Prefs_ScreenFits(const struct PrefsStruct *p)
 {
     if (p->State & APP_RENDERER_BUILTIN)
