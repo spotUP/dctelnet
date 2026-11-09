@@ -34,6 +34,8 @@ static char MainWindowTitle[] =
 #include <proto/exec.h>               // OpenLibrary(), GetMsg(), ReplyMsg(), AllocMem()...
 #include <proto/dos.h>                // Open(), Close(), Read(), Write(), PutStr()...
 #include <proto/intuition.h>          // OpenWindow(),CloseWindow(), OnMenu(), OffMenu()...
+#include <graphics/gfxbase.h>            // ChipRevBits0, DisplayFlags (VtRipDefaultScreen)
+#include <graphics/modeid.h>
 #include <graphics/displayinfo.h>      // DisplayInfo: the screen mode's pixel aspect (vtbuiltin.c)
 #include <graphics/videocontrol.h>    // VTAG_BORDERBLANK_SET
 #include <proto/graphics.h>           // Move(), SetAPen(), Text(), SetFont(), Draw()
@@ -186,6 +188,9 @@ static struct NewMenu mainMenuDesc[] =
     {    NM_ITEM, "RIPscrip Fonts",                  0 ,             0,               0, (APTR)MENU_RIPFONT},
     {       NM_SUB, "Stroke",                        0 ,       CHECKIT,       ~1L & 3, (APTR)MENU_RIPFONT_STROKE},
     {       NM_SUB, "Bitmap",                        0 ,       CHECKIT,       ~2L & 3, (APTR)MENU_RIPFONT_BITMAP},
+    {    NM_ITEM, "RIPscrip Screen Mode",            0 ,             0,               0, (APTR)MENU_RIPSCREEN},
+    {       NM_SUB, "Scale to fit current screen",   0 ,       CHECKIT|MENUTOGGLE,   0, (APTR)MENU_RIPSCREEN_FIT},
+    {       NM_SUB, "Screen Mode...",                0 ,             0,               0, (APTR)MENU_RIPSCREEN_MODE},
     {    NM_ITEM, "Bell",                            0 ,             0,               0, (APTR)MENU_BELL},
     {       NM_SUB, "Flash",                         0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_BELL_FLASH},
     {       NM_SUB, "Sound",                         0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_BELL_SOUND},
@@ -420,6 +425,8 @@ BYTE dontUseSig31 = -1; // don't use it, ibmcon.device will destroy it.
 // A selection drag is under way (SelectionDown..SelectionUp): the built-in
 // renderer's TerminalMouseReport() reads it.
 static BOOL  selDragging;
+static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h);     // below RequestDisplayReopen
+static void VtRipScreenChanged(const struct PrefsStruct *before);
 #include "vtbuiltin.c"
 
 static void ObtainWorkbenchPens(void);
@@ -1058,6 +1065,31 @@ static void RequestDisplayReopen(const struct PrefsStruct *before)
     }
 }
 
+/* RIPscrip went active or inactive (vtbuiltin.c VtRipWatch): prefs already hold
+ * the screen mode and renderer to show, so the ordinary display reopen does the
+ * work, the same as a mode or renderer change from the menus. */
+static void VtRipScreenChanged(const struct PrefsStruct *before)
+{
+    RequestDisplayReopen(before);
+}
+
+/* The default RIPscrip screen (D5, D12) when the site names none: a 1:1 mode of at
+ * least 640x350, NTSC interlace on OCS/ECS, Multiscan on AGA when a 31 kHz mode
+ * is there; returns FALSE with *id/*w/*h set. TRUE: none fits (PAL without
+ * 31 kHz), so the canvas is scaled to the current 640x256 screen. */
+static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h)
+{
+    if ((GfxBase->ChipRevBits0 & GFXF_AA_ALICE) && !ModeNotAvailable(VGAPRODUCT_KEY))
+    {
+        *id = VGAPRODUCT_KEY; *w = 640; *h = 480;
+        return FALSE;
+    }
+    if (GfxBase->DisplayFlags & PAL)
+        return TRUE;
+    *id = NTSC_MONITOR_ID | HIRESLACE_KEY; *w = 640; *h = 400;
+    return FALSE;
+}
+
 /**
  * @brief Bring the live menu's check marks up to date with `prefs`.
  *
@@ -1204,6 +1236,8 @@ BOOL SessionOverridesKeyboard(void)
 void EndEntrySession(void)
 {
     static struct PrefsStruct before;
+
+    VtRipEnd();                     // a RIP screen is undone before the site's settings are
 
     if (fKeysFromEntry)
     {
@@ -1548,7 +1582,7 @@ BOOL ScreenModeInto(struct PrefsStruct *target)
     {
         result = ScreenModeRequester(win, &target->DisplayID,
                                     &target->DisplayWidth, &target->DisplayHeight, &target->DisplayDepth,
-                                    32);
+                                    32, 640, 0);
     }
     else    // fallback to legacy ReqTools library
     {
@@ -1584,6 +1618,28 @@ BOOL ScreenModeInto(struct PrefsStruct *target)
 
 // The screen mode requester for the live settings (exported: LoadPrefs asks
 // for a mode on first run).
+/**
+ * @brief The RIPscrip screen mode requester (Terminal > RIPscrip Screen Mode, and
+ *        the site settings): the same ASL requester as ScreenModeInto, offering
+ *        only modes of at least RIP_MIN_WIDTH x RIP_MIN_HEIGHT. TRUE when chosen;
+ *        RipScreen is then RIPSCREEN_MODE.
+ */
+BOOL RipScreenModeInto(struct PrefsStruct *target)
+{
+    ULONG id = target->RipDisplayID ? target->RipDisplayID : (ULONG)(NTSC_MONITOR_ID | HIRESLACE_KEY);
+    UWORD w = target->RipWidth >= RIP_MIN_WIDTH ? target->RipWidth : RIP_MIN_WIDTH;
+    UWORD h = target->RipHeight >= RIP_MIN_HEIGHT ? target->RipHeight : RIP_MIN_HEIGHT;
+    UWORD depth = 4;
+
+    if (!ScreenModeRequester(win, &id, &w, &h, &depth, 4, RIP_MIN_WIDTH, RIP_MIN_HEIGHT))
+        return FALSE;
+    target->RipDisplayID = id;
+    target->RipWidth = w;
+    target->RipHeight = h;
+    target->RipScreen = RIPSCREEN_MODE;
+    return TRUE;
+}
+
 BOOL ChooseScreen(void)
 {
     // On first time init, returning FALSE prevents the preferences from being written to disk.
@@ -4736,6 +4792,17 @@ static void GetWindowMsg(struct Window *wwin)
                     case MENU_RIP_ON:
                         prefs.RipMode = (UBYTE)((ULONG)GTMENUITEM_USERDATA(item) - MENU_RIP_AUTO);
                         VtApplyRip();
+                        break;
+
+                    case MENU_RIPSCREEN_FIT:
+                        // (toggle: checking it picks the scaled view, unchecking goes back to the default)
+                        prefs.RipScreen = (prefs.RipScreen == RIPSCREEN_FIT) ? RIPSCREEN_DEFAULT : RIPSCREEN_FIT;
+                        SyncMenuChecks();
+                        break;
+
+                    case MENU_RIPSCREEN_MODE:
+                        if (RipScreenModeInto(&prefs))
+                            SyncMenuChecks();
                         break;
 
                     case MENU_RIPFONT_STROKE:

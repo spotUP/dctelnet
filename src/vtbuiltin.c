@@ -505,6 +505,75 @@ static void VtApplyRip(void)
     vt_set_rip_stroke(vtTerm, prefs.RipFonts == RIPFONT_STROKE ? 1 : 0);
 }
 
+/* RIPscrip screen switch (D4/D5/D12), the one place that watches the engine's
+ * RIP state: VtWrite calls it after every vt_write. The engine going RIP
+ * active (ESC[!, a valid !| line, or the On mode) puts the session on the
+ * built-in renderer and on the site's RIP screen; RIP going inactive (ESC[1!, a
+ * reset) or the session ending (VtRipEnd) puts back what was there. The reopen
+ * goes through VtRipScreenChanged -> RequestDisplayReopen, the path a screen
+ * mode or font change takes. The saved settings are the live prefs before the
+ * switch; the RIP ones are never written to the prefs file (SavePrefs writes
+ * globalPrefs only during an entry session; a quick connect has no such copy:
+ * see VtRipEnd's callers). */
+static BOOL vtRipSeen;                  /* the switch is in force */
+static struct PrefsStruct vtRipSaved;   /* the settings it replaced */
+
+static void VtRipWatch(void)
+{
+    struct PrefsStruct before;
+    ULONG id;
+    UWORD w, h;
+    BOOL fit;
+
+    if (!vtTerm)
+        return;
+    if (vtRipSeen == (vt_rip_active(vtTerm) != 0))
+        return;
+    before = prefs;
+    if (vtRipSeen)                      /* RIP ended: the previous screen and renderer */
+    {
+        prefs.State = (prefs.State & ~APP_RENDERER_ALL) | (vtRipSaved.State & APP_RENDERER_ALL);
+        prefs.DisplayID = vtRipSaved.DisplayID;
+        prefs.DisplayWidth = vtRipSaved.DisplayWidth;
+        prefs.DisplayHeight = vtRipSaved.DisplayHeight;
+        prefs.DisplayDepth = vtRipSaved.DisplayDepth;
+        vtRipSeen = FALSE;
+    }
+    else
+    {
+        vtRipSaved = prefs;
+        vtRipSeen = TRUE;
+        prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_BUILTIN;     /* D4 */
+        if (prefs.RipScreen == RIPSCREEN_MODE)
+        {
+            id = prefs.RipDisplayID; w = prefs.RipWidth; h = prefs.RipHeight; fit = FALSE;
+        }
+        else if (prefs.RipScreen == RIPSCREEN_FIT)
+            fit = TRUE;
+        else
+            fit = VtRipDefaultScreen(&id, &w, &h);      /* TRUE: no 1:1 mode fits (D12) */
+        if (!fit)
+        {
+            prefs.DisplayID = id;
+            prefs.DisplayWidth = w;
+            prefs.DisplayHeight = h;
+            prefs.DisplayDepth = 4;
+        }
+    }
+    VtRipScreenChanged(&before);
+}
+
+/* The session ended (or its settings did): a RIP switch still in force is undone. */
+static void VtRipEnd(void)
+{
+    if (vtRipSeen && vtTerm)
+    {
+        vt_set_rip(vtTerm, 0);          /* inactive: VtRipWatch puts the screen back */
+        VtRipWatch();
+        VtApplyRip();
+    }
+}
+
 static void VtSniffReset(void)
 {
     Vt_Utf8SnifferReset(&vtSniff);
@@ -854,6 +923,7 @@ static void VtWrite(const UBYTE *data, long len)
         vt_write(vtTerm, data, ndata);
     } else
         vt_write(vtTerm, data, len);
+    VtRipWatch();                   /* the one place RIP going active/inactive is noticed */
     term_flush();
     VtSyncCursor();
     cursor_show();

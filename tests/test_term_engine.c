@@ -273,6 +273,23 @@ static int newSawTerm;
 static int newSb;                   /* the scrollback line count VtOpen handed vt_new */
 static vt_term *probe_new(int cols, int rows, int sb, const vt_callbacks *cb, void *user);
 #define vt_new(c, r, sb, cb, u) probe_new((c), (r), (sb), (cb), (u))
+/* H4: DCTelnet.c's reopen hook and default-screen rule, as counting stubs. */
+static int ripReopens, ripDefaultAsked;
+static ULONG ripReopenDisplayID, ripReopenWas;
+static ULONG ripReopenRenderer;
+static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h)
+{
+    ripDefaultAsked++;
+    *id = 0x91000UL; *w = 640; *h = 400;
+    return FALSE;
+}
+static void VtRipScreenChanged(const struct PrefsStruct *before)
+{
+    ripReopens++;
+    ripReopenWas = before->DisplayID;
+    ripReopenDisplayID = prefs.DisplayID;
+    ripReopenRenderer = prefs.State & APP_RENDERER_ALL;
+}
 #include "../src/vtbuiltin.c"
 #undef term_glyph
 #undef vt_new
@@ -1886,6 +1903,54 @@ static void test_rip_fonts_preference_reaches_the_engine(void)
     assert(stroke != bitmap);
 }
 
+/* H4: ESC[! through the data path (VtWrite) on Auto switches to the site's RIP
+ * screen once, a plain text session never does, RIP ending (ESC[1!) or the
+ * session ending puts the previous screen back. */
+static void test_rip_h4_the_screen_switch_is_wired_through_the_data_path(void)
+{
+    const ULONG siteMode = 0x29000UL, appMode = 0x11000UL;
+
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    VtRipEnd();
+    prefs.RipMode = RIPMODE_OFF;
+    VtApplyRip();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    prefs.DisplayID = appMode;
+    prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_CONSOLE_DEVICE;
+    prefs.RipScreen = RIPSCREEN_MODE;
+    prefs.RipDisplayID = siteMode; prefs.RipWidth = 640; prefs.RipHeight = 480;
+    ripReopens = 0; ripDefaultAsked = 0;
+
+    vt_put("plain text\r\nmore \033[1m bold\033[0m\r\n");
+    assert(ripReopens == 0 && prefs.DisplayID == appMode);
+
+    vt_put("\033[!");
+    assert(vt_rip_active(vtTerm) == 1);
+    assert(ripReopens == 1);                                /* the sentinel: the hook ran, once */
+    assert(ripReopenWas == appMode && ripReopenDisplayID == siteMode);
+    assert(ripReopenRenderer == APP_RENDERER_BUILTIN);      /* D4: the built-in renderer */
+    assert(prefs.DisplayWidth == 640 && prefs.DisplayHeight == 480);
+    assert(ripDefaultAsked == 0);                           /* a chosen mode needs no default */
+    vt_put("more RIP\r\n");
+    assert(ripReopens == 1);                                /* not again while it stays active */
+
+    vt_put("\033[1!");                                      /* RIP off: the screen as it was */
+    assert(vt_rip_active(vtTerm) == 0);
+    assert(ripReopens == 2 && prefs.DisplayID == appMode);
+    assert((prefs.State & APP_RENDERER_ALL) == APP_RENDERER_CONSOLE_DEVICE);
+
+    prefs.RipScreen = RIPSCREEN_DEFAULT;                    /* no site mode: the default rule decides */
+    vt_put("\033[!");
+    assert(ripReopens == 3 && ripDefaultAsked == 1 && prefs.DisplayID == 0x91000UL);
+    VtRipEnd();                                             /* the session ends */
+    assert(ripReopens == 4 && prefs.DisplayID == appMode);
+    assert((prefs.State & APP_RENDERER_ALL) == APP_RENDERER_CONSOLE_DEVICE);
+    prefs.RipScreen = RIPSCREEN_DEFAULT;
+    prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_BUILTIN;
+}
+
 int main(void)
 {
     test_the_terminal_starts_below_the_title_bar_and_matches_the_window_rows();
@@ -1943,6 +2008,7 @@ int main(void)
     test_rip_index_0_is_the_palette_colour_not_the_background();
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
     test_rip_fonts_preference_reaches_the_engine();
+    test_rip_h4_the_screen_switch_is_wired_through_the_data_path();
     printf("term_engine: all assertions passed\n");
     return 0;
 }
