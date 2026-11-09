@@ -2339,6 +2339,7 @@ add:
 
 
 #include "DCTelnet-protocol.h"
+#include "recvgate.h"
 
 static void Receive(void)
 {
@@ -2544,6 +2545,31 @@ static void Receive(void)
 
         ResetZmodemContext();
     }
+}
+
+// After WaitSelect(): Receive() only when the socket is readable (or SSH holds
+// decrypted bytes); its recv() blocks. A real WaitSelect() error is a connection
+// error, handled like a failed recv() in Receive(). Returns TRUE when Receive() ran.
+static BOOL RecvGateRun(LONG i, fd_set *readSet, BOOL drawLed)
+{
+    switch (RecvGate(i, FD_ISSET(tcpSocket, readSet) != 0, SshConn_Buffered(), Errno() == EINTR))
+    {
+        case RECV_RECEIVE:
+            // Draw when Title bar AND LEDs are enabled:
+            if (drawLed && STATE_ARE_ALL(APP_TITLE_BAR_ENABLED | APP_LEDS_ENABLED))
+            {
+                SetAPen(&scr->RastPort, LegacyPen(10));
+                RectFill(&scr->RastPort, scr->Width-70, 3, scr->Width-62, BAR_TEXT_HEIGHT-2);
+            }
+            Receive();
+            if (drawLed && STATE_ARE_ALL(APP_TITLE_BAR_ENABLED | APP_LEDS_ENABLED))
+                EraseRect(&scr->RastPort, scr->Width-72, 2, scr->Width-60, BAR_TEXT_HEIGHT-1);
+            return TRUE;
+        case RECV_DISCONNECT:
+            DisConnect(!SshConn_Active() || SshConn_ClosedByServer(), FALSE);
+            break;
+    }
+    return FALSE;
 }
 
 
@@ -3147,7 +3173,7 @@ int main(int argc, char *argv[])
                 }
             }
 
-            if (!musicHold && (i != 0 || SshConn_Buffered())) Receive();
+            if (isConnected && !musicHold) RecvGateRun(i, &rd, FALSE);
 
         } else { // app is not iconified
 
@@ -3198,20 +3224,11 @@ int main(int argc, char *argv[])
                 if(packetWin) GetWindowMsg(packetWin);
                 if (toolBarWin) GetWindowMsg(toolBarWin);
 
-                if (!musicHold && (i != 0 || SshConn_Buffered()))
+                if (musicHold || !RecvGateRun(i, &rd, TRUE))
                 {
-                    // Draw when Title bar AND LEDs are enabled :
-                    if (STATE_ARE_ALL(APP_TITLE_BAR_ENABLED | APP_LEDS_ENABLED))
-                    {
-                        SetAPen(&scr->RastPort, LegacyPen(10));
-                        RectFill(&scr->RastPort, scr->Width-70, 3, scr->Width-62, BAR_TEXT_HEIGHT-2);
-                    }
-                    Receive();
-                    if (STATE_ARE_ALL(APP_TITLE_BAR_ENABLED | APP_LEDS_ENABLED))
-                        EraseRect(&scr->RastPort, scr->Width-72, 2, scr->Width-60, BAR_TEXT_HEIGHT-1);
+                    if (STATE_IS(APP_RENDERER_BUILTIN))
+                        VtFlushHeld();      // MA2-14: socket and SSH drained: draw a held UTF-8 prefix now
                 }
-                else if (STATE_IS(APP_RENDERER_BUILTIN))
-                    VtFlushHeld();      // MA2-14: socket and SSH drained: draw a held UTF-8 prefix now
 
             } else {  // not connected
                 ULONG sig;
