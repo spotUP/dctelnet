@@ -64,6 +64,7 @@ void SitePrefs_ApplyEntry(struct PrefsStruct *live, const struct PrefsStruct *gl
         result.Blink = e->Blink;
         result.TermType = e->TermType;
         result.RipMode = e->RipMode;
+        result.RipFonts = e->RipFonts;
         copy_flags(&result, e, TERMINAL_GROUP_FLAGS);
     }
     if (entry->groups & SITE_GROUP_KEYBOARD)
@@ -131,7 +132,7 @@ static const struct { size_t offset, size; } prefsFields[] =
     F(nScrollbackLines), F(TelnetTermType), F(XemLibrary),
     F(XferLibrary), F(DownloadPath), F(UploadPath), F(XferOptions),
     F(RedialTries), F(RedialDelay), F(AntiIdleMinutes), F(ConnectTimeout), F(Charset),
-    F(Bell), F(AnsiMusic), F(Blink), F(TermType), F(RipMode), F(Reserved)
+    F(Bell), F(AnsiMusic), F(Blink), F(TermType), F(RipMode), F(RipFonts), F(Reserved)
 #undef F
 };
 
@@ -430,6 +431,7 @@ void SitePrefs_GroupSummary(ULONG group, const struct PrefsStruct *p, char *out,
         if (p->TermType == TERMTYPE_UNIX)  put(out, &len, max, ", Unix");
         if (p->RipMode == RIPMODE_OFF)     put(out, &len, max, ", RIPscrip Off");
         if (p->RipMode == RIPMODE_ON)      put(out, &len, max, ", RIPscrip On");
+        if (p->RipFonts == RIPFONT_BITMAP) put(out, &len, max, ", RIPscrip Bitmap Fonts");
         if (p->Blink == BLINK_STEADY)      put(out, &len, max, ", No iCE Colours");
     }
     else if (group == SITE_GROUP_KEYBOARD)

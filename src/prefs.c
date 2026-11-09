@@ -107,6 +107,7 @@ static void ValidateAndInitPrefs(BOOL *userMustChooseAScreenMode)
 
     if (prefs.TermType > TERMTYPE_PETSCII) prefs.TermType = TERMTYPE_AUTO;
     if (prefs.RipMode > RIPMODE_ON) prefs.RipMode = RIPMODE_AUTO;
+    if (prefs.RipFonts > RIPFONT_BITMAP) prefs.RipFonts = RIPFONT_STROKE;
 
     // Fixed-size strings: guarantee nul-termination before any further use, then fall back to
     // defaults when empty.

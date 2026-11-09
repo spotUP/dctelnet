@@ -183,6 +183,9 @@ static struct NewMenu mainMenuDesc[] =
     {       NM_SUB, "Auto",                          0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_RIP_AUTO},
     {       NM_SUB, "Off",                           0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_RIP_OFF},
     {       NM_SUB, "On",                            0 ,       CHECKIT,       ~4L & 7, (APTR)MENU_RIP_ON},
+    {    NM_ITEM, "RIPscrip Fonts",                  0 ,             0,               0, (APTR)MENU_RIPFONT},
+    {       NM_SUB, "Stroke",                        0 ,       CHECKIT,       ~1L & 3, (APTR)MENU_RIPFONT_STROKE},
+    {       NM_SUB, "Bitmap",                        0 ,       CHECKIT,       ~2L & 3, (APTR)MENU_RIPFONT_BITMAP},
     {    NM_ITEM, "Bell",                            0 ,             0,               0, (APTR)MENU_BELL},
     {       NM_SUB, "Flash",                         0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_BELL_FLASH},
     {       NM_SUB, "Sound",                         0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_BELL_SOUND},
@@ -4735,6 +4738,12 @@ static void GetWindowMsg(struct Window *wwin)
                         VtApplyRip();
                         break;
 
+                    case MENU_RIPFONT_STROKE:
+                    case MENU_RIPFONT_BITMAP:
+                        prefs.RipFonts = (UBYTE)((ULONG)GTMENUITEM_USERDATA(item) - MENU_RIPFONT_STROKE);
+                        VtApplyRip();
+                        break;
+
                     case MENU_COPY:
                         if (selShown)
                             CopyRange(&selShownRange);
@@ -4910,7 +4919,6 @@ static void GetWindowMsg(struct Window *wwin)
                             RequestDisplayReopen(&before);
                             VtApplyPersonality();            // the Terminal Type of the site or the settings
                             VtApplyRip();
-        VtApplyRip();
                         }
                         break;
                     }

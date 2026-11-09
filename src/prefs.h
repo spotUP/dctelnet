@@ -123,7 +123,8 @@ struct PrefsStruct
     // Added after the first 2.x files: a shorter file loads with these 0.
     UBYTE TermType;             // TERMTYPE_AUTO (0), _BBS, _UNIX, _PETSCII (below)
     UBYTE RipMode;             // RIPMODE_AUTO (0), _OFF, _ON (below): RIPscrip graphics
-    UBYTE Reserved[2];          // keeps the struct a multiple of 4; a new UBYTE field takes one
+    UBYTE RipFonts;             // RIPFONT_STROKE (0), _BITMAP (below): how RIPscrip draws its text fonts
+    UBYTE Reserved[1];          // keeps the struct a multiple of 4; a new UBYTE field takes one
 };
 
 /*
@@ -188,6 +189,9 @@ struct PrefsStruct
 #define RIPMODE_AUTO 0      // RIP graphics when the host sends ESC[! or a valid !| line
 #define RIPMODE_OFF  1      // every byte is text
 #define RIPMODE_ON   2      // RIP graphics from the start
+// RIPscrip text fonts (prefs.RipFonts). 0 is Stroke so a file from before the field loads as Stroke.
+#define RIPFONT_STROKE 0    // font styles 1-4 drawn as Hershey strokes
+#define RIPFONT_BITMAP 1    // every font drawn with the 8x8 bitmap
 // vt_set_rip's mode: 0 off, 1 on (active at once), 2 auto (active on ESC[! or a valid !| line)
 #define Prefs_RipEngineMode(p) ((p)->RipMode == RIPMODE_OFF ? 0 : (p)->RipMode == RIPMODE_ON ? 1 : 2)
 

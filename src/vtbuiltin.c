@@ -499,8 +499,10 @@ static void VtApplyPersonality(void)
  * !| line (vt_rip_active tells). Auto -> 2, On -> 1, Off -> 0. */
 static void VtApplyRip(void)
 {
-    if (vtTerm)
-        vt_set_rip(vtTerm, Prefs_RipEngineMode(&prefs));
+    if (!vtTerm)
+        return;
+    vt_set_rip(vtTerm, Prefs_RipEngineMode(&prefs));
+    vt_set_rip_stroke(vtTerm, prefs.RipFonts == RIPFONT_STROKE ? 1 : 0);
 }
 
 static void VtSniffReset(void)

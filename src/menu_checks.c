@@ -74,6 +74,8 @@ BOOL MenuChecks_Checked(const struct PrefsStruct *p, enum MenuItemID id, BOOL *c
     case MENU_RIP_AUTO: *checked = (p->RipMode == RIPMODE_AUTO); return TRUE;
     case MENU_RIP_OFF:  *checked = (p->RipMode == RIPMODE_OFF);  return TRUE;
     case MENU_RIP_ON:   *checked = (p->RipMode == RIPMODE_ON);   return TRUE;
+    case MENU_RIPFONT_STROKE: *checked = (p->RipFonts == RIPFONT_STROKE); return TRUE;
+    case MENU_RIPFONT_BITMAP: *checked = (p->RipFonts == RIPFONT_BITMAP); return TRUE;
 
     case MENU_ICE_COLOURS: *checked = (p->Blink == BLINK_ICE); return TRUE;
 

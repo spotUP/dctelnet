@@ -1852,6 +1852,40 @@ static void test_rip_h3_the_ripscrip_preference_reaches_the_engine(void)
     assert(vt_images(vtTerm) == images);
 }
 
+/* The per-site RIPscrip Fonts preference reaches the engine through VtApplyRip:
+ * Stroke draws RIP font style 1 with Hershey strokes (the sentinel counts the
+ * stroke glyphs), Bitmap with the 8x8 font, and the canvas pixels differ. */
+static unsigned long rip_font_canvas_sum(UBYTE fonts, long *strokeGlyphs)
+{
+    vt_image_view v;
+    unsigned long sum = 0;
+    long i, g0 = vt_rip_stroke_glyphs();
+
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    prefs.RipMode = RIPMODE_OFF;
+    VtApplyRip();
+    prefs.RipMode = RIPMODE_ON;
+    prefs.RipFonts = fonts;
+    VtApplyRip();
+    vt_put("!|c0F|Y01000200|@2S3CHgRip, a|TZy&\r\n");   /* style 1 (triplex), size 2 */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    for (i = 0; i < (long)v.w * v.h; i++)
+        sum = sum * 31 + v.pix[i];
+    *strokeGlyphs = vt_rip_stroke_glyphs() - g0;
+    return sum;
+}
+
+static void test_rip_fonts_preference_reaches_the_engine(void)
+{
+    long strokeN, bitmapN;
+    unsigned long stroke = rip_font_canvas_sum(RIPFONT_STROKE, &strokeN);
+    unsigned long bitmap = rip_font_canvas_sum(RIPFONT_BITMAP, &bitmapN);
+
+    assert(strokeN > 0 && bitmapN == 0);
+    assert(stroke != bitmap);
+}
+
 int main(void)
 {
     test_the_terminal_starts_below_the_title_bar_and_matches_the_window_rows();
@@ -1908,6 +1942,7 @@ int main(void)
     test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque();
     test_rip_index_0_is_the_palette_colour_not_the_background();
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
+    test_rip_fonts_preference_reaches_the_engine();
     printf("term_engine: all assertions passed\n");
     return 0;
 }

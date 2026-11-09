@@ -80,6 +80,9 @@ enum MenuItemID
             MENU_RIP_AUTO,          // AUTO, OFF, ON in this order: minus
             MENU_RIP_OFF,           //   MENU_RIP_AUTO is the prefs.h
             MENU_RIP_ON,            //   RIPMODE_ value
+        MENU_RIPFONT,
+            MENU_RIPFONT_STROKE,    // STROKE, BITMAP in this order: minus
+            MENU_RIPFONT_BITMAP,    //   MENU_RIPFONT_STROKE is the prefs.h RIPFONT_ value
         MENU_BELL,
             MENU_BELL_FLASH,        // FLASH, SOUND, OFF in this order (prefs.h)
             MENU_BELL_SOUND,
