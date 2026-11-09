@@ -107,10 +107,18 @@ static void RectFill(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
 /* Pictures (kitty graphics): the chunky writes, one line each with the
  * first pixel's pen. */
 static int chunkyCalls;
+#define FB_W 700
+#define FB_H 420
+static UBYTE chunkyFb[FB_W * FB_H];     /* the last pen written at each pixel, 0xFF where none */
 static void WriteChunkyPixels(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, UBYTE *a, LONG mod)
 {
-    (void)rp; (void)mod;
+    LONG x, y, stride = mod ? mod : x1 - x0 + 1;
+    (void)rp;
     chunkyCalls++;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++)
+            if (x >= 0 && x < FB_W && y >= 0 && y < FB_H)
+                chunkyFb[y * FB_W + x] = a[(y - y0) * stride + (x - x0)];
     call("Chunky(%ld,%ld,%ld,%ld pen%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)a[0]);
 }
 static LONG WritePixelArray8(struct RastPort *rp, ULONG x0, ULONG y0, ULONG x1, ULONG y1, UBYTE *a, struct RastPort *tmp)
@@ -1713,6 +1721,42 @@ static void test_kg10_the_screens_pixel_aspect_reaches_the_engine(void)
     assert(aspectCalls >= 1 && aspectRx == 0 && aspectRy == 0);
 }
 
+/* RIP-H2: a RIP canvas (vtengine image kind 4, z = -1, its own palette, index 0
+ * opaque) reaches the screen through VtWrite and VtDrawImages like a sixel:
+ * the filled bar gets the pen of its palette colour, and canvas index 0 around
+ * it is painted in the default background pen, not left as the text cell. */
+static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque(void)
+{
+    vt_image_view v;
+    unsigned long runs0;
+    UBYTE barpen, bgpen;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");                 /* no picture left from the tests before */
+    assert(vt_images(vtTerm) == 0);
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    chunkyCalls = 0;
+    vtImgRuns = 0;
+    vt_set_rip(vtTerm, 1);
+    vt_put("\033[2!");
+    /* fill style solid, colour 9; bar (10,10)-(100,100) */
+    vt_put("!|S0109|B0A0A2S2S\r\n");
+    assert(vt_images(vtTerm) == 1);
+    runs0 = vtImgRuns;
+    assert(runs0 > 0 && chunkyCalls > 0);       /* VtDrawImages ran for the canvas */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    assert(v.kitty == 0 && v.z < 0 && v.w == 640 && v.h == 350);
+    assert(v.pal[9] != 0 && v.pix[50 * 640 + 50] == 9 && v.pix[200 * 640 + 150] == 0);
+    barpen = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[9] & 0xFFFFFFUL)))];
+    bgpen = term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
+    assert(chunkyFb[(TERM_PY(0) + 50) * FB_W + TERM_PX(0) + 50] == barpen);     /* inside the bar */
+    assert(chunkyFb[(TERM_PY(0) + 200) * FB_W + TERM_PX(0) + 150] == bgpen);    /* index 0: painted, not skipped */
+    /* a later change redraws through the same path (the canvas serial moved) */
+    vtImgRuns = 0;
+    vt_put("!|S0101|B0A0A2S2S\r\n");
+    assert(vtImgRuns > 0);
+}
+
 int main(void)
 {
     test_the_terminal_starts_below_the_title_bar_and_matches_the_window_rows();
@@ -1766,6 +1810,7 @@ int main(void)
     test_ma4_4_the_alt_screen_leaves_the_scrollback_alone();
     test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answered();
     test_kg10_the_screens_pixel_aspect_reaches_the_engine();
+    test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque();
     printf("term_engine: all assertions passed\n");
     return 0;
 }
