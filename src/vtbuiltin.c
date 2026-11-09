@@ -110,6 +110,23 @@ static UBYTE vtImgMap[256];             /* the picture's palette index -> screen
 static long vtImgSerial = -1;           /* the picture vtImgMap was made for */
 static unsigned long vtImgRuns;         /* sentinel: picture runs written */
 
+/* FNV-1a over the RIPscrip canvas, one byte a pixel: the same sum as vtcon's
+ * tests/test_rip.c canvas_sum, so a run here compares with its goldens. 0 when
+ * the terminal holds no canvas. Used by `DCTelnet --replay`. */
+static ULONG VtCanvasSum(void)
+{
+    vt_image_view v;
+    ULONG h = 2166136261UL;
+    LONG i, n;
+
+    if (!vtTerm || !vt_row_image(vtTerm, 0, 0, &v))
+        return 0;
+    n = (LONG)v.w * v.h;
+    for (i = 0; i < n; i++)
+        h = (h ^ v.pix[i]) * 16777619UL;
+    return h;
+}
+
 /* Pictures always go through the window's RastPort: the direct planar path
  * writes 4-bit colour numbers only. Uncovered, retro32-term draws glyphs
  * straight into the planes (term_rp NULL) but its window RastPort and the

@@ -251,6 +251,11 @@ static UBYTE *DisplayBytes(struct Utf8Decoder *d, UBYTE *data, long *len);
 static UBYTE *ScrollbackBytes(UBYTE *data, long *len);
 static UBYTE *SoundFilter(UBYTE *text, long *len, long *used, BOOL *stopped);
 static void ShowText(UBYTE *text, long len);
+static char replayPath[256];    // DCTelnet --replay <file> (below ShowText)
+static BOOL replayPending;
+static ULONG replayTicks;       // DateStamp ticks (1/50 s) the feed took, emulated speed on a rig
+static BOOL ReplayFeed(void);
+static void ReplayReport(void);
 static void MusicHoldPoll(void);
 static void MusicHoldDrop(void);
 static BOOL musicHold;                   // text held back by a foreground tune (see ShowText)
@@ -2880,15 +2885,29 @@ int main(int argc, char *argv[])
                 "compiled with: " STR(COMPILER_STRING) "\n"
                 "\n"
                 "Usage: DCTelnet <host> [<port>]\n"
+                "       DCTelnet --replay <file>   (show a file as host output, print the canvas checksum)\n"
             );
 
             returnCode = RETURN_OK;
             goto clean_exit;
         }
 
-        strlcpy(server, argv[1], sizeof(server));
+        if(stricmp(argv[1], "--replay") == 0)
+        {
+            if(argc < 3)
+            {
+                PutStr("Usage: DCTelnet --replay <file>\n");
+                returnCode = RETURN_FAIL;
+                goto clean_exit;
+            }
+            strlcpy(replayPath, argv[2], sizeof(replayPath));
+        }
+        else
+        {
+            strlcpy(server, argv[1], sizeof(server));
 
-        if(argc > 2) tcpPort = atoi(argv[2]);
+            if(argc > 2) tcpPort = atoi(argv[2]);
+        }
 
         //if(argc > 3) if(stricmp(argv[3], "debug")==0) debug = TRUE;
     }
@@ -3001,6 +3020,9 @@ int main(int argc, char *argv[])
     // We retry opening the bsdsocket.library later as user might load a TCP/IP stack later.
 
 
+    if (replayPath[0])      // the engine, and so the RIP canvas, lives in the built-in renderer
+        prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_BUILTIN;
+
     if (! OpenDisplay())
         goto clean_exit;
 
@@ -3012,6 +3034,9 @@ int main(int argc, char *argv[])
 
     shouldRestart = FALSE;
     shouldReopenScreen = FALSE;
+
+    if (replayPath[0] && !ReplayFeed())
+        goto clean_exit;
 
     // Connect to server if it was specified in the command line. It needs an opened display,
     // and with Terminal Type PETSCII the C64 one: the main loop reopens it, then connects.
@@ -3198,7 +3223,7 @@ int main(int argc, char *argv[])
 
                 // A display reopen or a connect already queued (an entry's
                 // settings, Terminal Type) runs now, not after the next event.
-                if (shouldRestart || shouldReopenConsole || pendingConnect.active)
+                if (shouldRestart || shouldReopenConsole || pendingConnect.active || replayPending)
                     sigmask = SetSignal(0L, sig | winsig | SIGBREAKF_CTRL_C)
                             & (sig | winsig | SIGBREAKF_CTRL_C);
                 else
@@ -3256,6 +3281,13 @@ int main(int argc, char *argv[])
             // After the reopen, so the connect sees the entry's display settings.
             if (pendingConnect.active)
                 RunPendingConnect();
+
+            // --replay: the RIP screen switch (if any) has settled, so the canvas is what it shows.
+            if (replayPending && !shouldRestart && !shouldReopenConsole)
+            {
+                ReplayReport();
+                shouldQuitApp = TRUE;
+            }
         }
     } /* -- end of main loop -- */
 
@@ -3424,6 +3456,38 @@ static BOOL  musicHoldRoom;             // held for queue room, not for the tune
 
 // The text to the screen and the scrollback; a foreground tune in it holds
 // back what follows (while there is sound to wait for).
+/* DCTelnet --replay <file> (RIPscrip plan H7): the file goes through ShowText() as host output
+ * in connection-sized pieces, then the main loop settles any display reopen the RIP switch
+ * asked for and ReplayReport() prints the canvas checksum (vtcon's canvas_sum) and the blit
+ * sentinel, then the program ends. */
+static BOOL ReplayFeed(void)
+{
+    BPTR fh = Open((STRPTR)replayPath, MODE_OLDFILE);
+    UBYTE chunk[1024];
+    struct DateStamp t0, t1;
+    LONG n;
+
+    if (!fh)
+    {
+        Printf("replay: cannot open %s\n", (LONG)replayPath);
+        return FALSE;
+    }
+    DateStamp(&t0);
+    while ((n = Read(fh, chunk, sizeof(chunk))) > 0)
+        ShowText(chunk, n);
+    DateStamp(&t1);
+    Close(fh);
+    replayTicks = (ULONG)((t1.ds_Minute - t0.ds_Minute) * 3000L + (t1.ds_Tick - t0.ds_Tick));
+    replayPending = TRUE;
+    return TRUE;
+}
+
+static void ReplayReport(void)
+{
+    Printf("replay: canvas=%lu blits=%lu feed_ticks=%lu\n", VtCanvasSum(), vtImgRuns, replayTicks);
+    replayPending = FALSE;
+}
+
 static void ShowText(UBYTE *text, long len)
 {
     for (;;)

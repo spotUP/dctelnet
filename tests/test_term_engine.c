@@ -2009,6 +2009,36 @@ static void test_rip_h5_hotkey_reaches_the_reply_path(void)
     VtClose();
 }
 
+/* H7: `DCTelnet --replay <file>` feeds the file as host output (ShowText -> VtWrite) and prints
+ * VtCanvasSum() and vtImgRuns. The fixture is vtcon's tests/test_rip.c stroke_fixture(1, 0, 1)
+ * with the stroke option as the default prefs have it (RipFonts: stroke); its sum is vtcon's
+ * stroke_gold[0][0][0]. */
+static void test_rip_h7_replay_checksum_equals_the_vtcon_golden(void)
+{
+    static UBYTE buf[512];
+    FILE *f = fopen("fixtures/rip-bitmap-text.rip", "rb");
+    size_t n, off;
+
+    assert(f);
+    n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    assert(n > 0 && n < sizeof buf);
+
+    xterm_begin();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    vtImgRuns = 0;
+    assert(VtCanvasSum() == 0);                                 /* no canvas before the replay */
+    for (off = 0; off < n; off += 7)                            /* odd pieces: the split never matters */
+        VtWrite(buf + off, (long)(n - off < 7 ? n - off : 7));
+    assert(vt_rip_active(vtTerm) == 1);                         /* detected from the `!|` line alone */
+    assert(vt_rip_commands(vtTerm) > 0);                        /* the sentinel: the parser ran */
+    assert(prefs.RipFonts == RIPFONT_STROKE);
+    assert(VtCanvasSum() == 2193060398UL);                      /* vtcon stroke_gold[0][0][0] */
+    assert(vtImgRuns > 0);                                      /* the canvas was blitted */
+    VtClose();
+}
+
 /* The RIP switch is temporary for the run: in a quick connect (no entry
  * session) the live prefs are what SavePrefs writes, so what it would save
  * must still be the pre-RIP screen and renderer while RIP is active. */
@@ -2107,6 +2137,7 @@ int main(void)
     test_rip_h4_the_screen_switch_is_wired_through_the_data_path();
     test_rip_h5_click_reaches_the_reply_path();
     test_rip_h5_hotkey_reaches_the_reply_path();
+    test_rip_h7_replay_checksum_equals_the_vtcon_golden();
     test_rip_h4_the_screen_switch_never_reaches_the_prefs_file();
     printf("term_engine: all assertions passed\n");
     return 0;
