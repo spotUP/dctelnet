@@ -26,6 +26,7 @@
 #include "vtpens.h"
 #include "vtinput.h"
 #include "glyphraster.h"
+#include "vtdownload.h"
 #include "site_prefs.h"
 #include "screenfont.h"
 
@@ -855,6 +856,7 @@ static int VtOpen(void)
     VtSetAspect();
     VtApplyPersonality();
     VtApplyRip();
+    vt_set_download_sink(vtTerm, VtDownload_Sink, NULL);   /* inline=0 files: Download Path/local/<name> */
     Vt_MouseReset(&vtMouse);
     vtTitleSeen[0] = vtTitleShown[0] = 0;
     TerminalMouseReport();
