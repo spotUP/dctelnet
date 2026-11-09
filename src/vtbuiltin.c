@@ -603,7 +603,7 @@ static char vtDlHost[52];
 
 static void VtSetDownloadHost(const char *host)
 {
-    strlcpy(vtDlHost, host ? host : "", sizeof(vtDlHost));
+    strncpy(vtDlHost, host ? host : "", sizeof(vtDlHost) - 1);    /* static: last byte stays 0 */
     if (vtTerm)
         vt_set_download_sink(vtTerm, VtDownload_Sink, vtDlHost);
 }
