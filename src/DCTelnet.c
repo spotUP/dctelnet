@@ -3482,9 +3482,41 @@ static BOOL ReplayFeed(void)
     return TRUE;
 }
 
+/* Plan H2b: the cost of one forced full-canvas redraw (every cell dirty) through the real
+ * VtDraw -> VtDrawImages -> VtImgWrite path, averaged over REPLAY_REDRAWS, in microseconds
+ * (E-clock). 0 when the timer is not open or no picture is shown. */
+#define REPLAY_REDRAWS 10
+static ULONG ReplayRedrawUs(void)
+{
+    struct EClockVal a, b;
+    ULONG perSecond = 0, runs0 = vtImgRuns;
+    UBYTE i;
+
+    if (!tickOpen || !vtTerm || !vt_images(vtTerm))
+        return 0;
+    perSecond = ReadEClock(&a);
+    for (i = 0; i < REPLAY_REDRAWS; i++)
+        VtDraw(NULL, 0, 0, term_cols, term_rows);
+    ReadEClock(&b);
+    if (vtImgRuns == runs0 || !perSecond)
+        return 0;                       /* nothing was blitted: no number */
+    {
+        /* 64-bit-free: elapsed E-clock counts, hi words differ by at most a few */
+        ULONG lo = b.ev_lo - a.ev_lo, hi = b.ev_hi - a.ev_hi - (b.ev_lo < a.ev_lo);
+
+        if (hi)
+            return 0xFFFFFFFFUL;
+        /* us = counts / N * 1000 / (perSecond / 1000); exact to 0.1 percent, no overflow below 4 s */
+        return ((lo / REPLAY_REDRAWS) * 1000UL) / (perSecond / 1000UL);
+    }
+}
+
 static void ReplayReport(void)
 {
+    ULONG redrawUs = ReplayRedrawUs();
+
     Printf("replay: canvas=%lu blits=%lu feed_ticks=%lu\n", VtCanvasSum(), vtImgRuns, replayTicks);
+    Printf("replay: redraw_us=%lu redraw_n=%lu\n", redrawUs, (ULONG)REPLAY_REDRAWS);
     replayPending = FALSE;
 }
 
