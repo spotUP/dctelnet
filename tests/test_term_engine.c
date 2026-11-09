@@ -1758,6 +1758,30 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     assert(vtImgRuns > 0);
 }
 
+/* RIP palette entry 0 is a real colour: set non-black, the canvas pixels of
+ * index 0 draw with that colour's pen, not the default background pen (only a
+ * sixel's index 0 means unset). */
+static void test_rip_index_0_is_the_palette_colour_not_the_background(void)
+{
+    vt_image_view v;
+    UBYTE pen0, bgpen;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[2!\r\n");
+    vt_put("!|a0004|S0109|B0A0A2S2S\r\n");   /* entry 0 -> EGA colour 4; a bar of colour 9 */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    assert(v.kitty == 0 && v.bg0 == 0 && v.pix[200 * 640 + 150] == 0);
+    assert((v.pal[0] & 0xFFFFFFUL) != 0);
+    pen0 = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[0] & 0xFFFFFFUL)))];
+    bgpen = term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
+    assert(pen0 != bgpen);
+    assert(chunkyFb[(TERM_PY(0) + 200) * FB_W + TERM_PX(0) + 150] == pen0);
+}
+
 /* RIP-H3: the per-site RIPscrip preference reaches the engine. The test drives
  * VtApplyRip (open, menu and site change all call it) and the byte path VtWrite:
  * Off leaves the RIP line as text (no canvas, no parsed command); Auto and On
@@ -1856,6 +1880,7 @@ int main(void)
     test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answered();
     test_kg10_the_screens_pixel_aspect_reaches_the_engine();
     test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque();
+    test_rip_index_0_is_the_palette_colour_not_the_background();
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
     printf("term_engine: all assertions passed\n");
     return 0;

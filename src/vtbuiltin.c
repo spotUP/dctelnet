@@ -125,7 +125,10 @@ static void VtImgColours(const vt_image_view *v)
     if (vtImgSerial == v->serial)
         return;
     vtImgSerial = v->serial;
-    vtImgMap[0] = term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];  /* a sixel's unset pixels */
+    /* A sixel's index 0 is its unset pixels (the default background); a RIP
+     * canvas or a kitty picture reads it as a palette colour. */
+    vtImgMap[0] = (!v->kitty && !v->bg0) ? term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v->pal[0] & 0xFFFFFFUL)))]
+                                         : term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
     for (i = 1; i < v->npal && i < 256; i++)
         vtImgMap[i] = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v->pal[i] & 0xFFFFFFUL)))];
 }
