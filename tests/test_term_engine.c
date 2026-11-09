@@ -133,6 +133,19 @@ static struct BitMap *AllocBitMap(ULONG w, ULONG h, ULONG d, ULONG f, struct Bit
     return friendBm;
 }
 static void FreeBitMap(struct BitMap *b) { (void)b; }
+/* timer.device's ReadEClock for the H2c blit timing: every read moves the
+ * clock on by 7 counts, so one timed blit costs exactly 7. */
+struct Device { int unused; };
+struct EClockVal { ULONG ev_hi, ev_lo; };
+struct Device *TimerBase;
+static ULONG eclockNow;
+static ULONG ReadEClock(struct EClockVal *e)
+{
+    eclockNow += 7;
+    e->ev_hi = 0;
+    e->ev_lo = eclockNow;
+    return 709379;
+}
 static void ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0, LONG x1, LONG y1)
 {
     char line[160];
@@ -1823,6 +1836,16 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     vtImgRuns = 0;
     vt_put("!|S0101|B0A0A2S2S\r\n");
     assert(vtImgRuns > 0);
+    /* H2c: with timing on, a full redraw sums one clock delta per blit and
+     * nothing for the text; off, the sum stays put */
+    vtImgRuns = 0;
+    vtImgBlitCounts = 0;
+    vtImgTime = TRUE;
+    VtDraw(NULL, 0, 0, term_cols, term_rows);
+    vtImgTime = FALSE;
+    assert(vtImgRuns > 0 && vtImgBlitCounts == 7 * vtImgRuns);
+    VtDraw(NULL, 0, 0, term_cols, term_rows);
+    assert(vtImgBlitCounts == 7 * (vtImgRuns / 2));
 }
 
 /* RIP palette entry 0 is a real colour: set non-black, the canvas pixels of

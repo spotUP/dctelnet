@@ -3504,6 +3504,7 @@ static BOOL ReplayFeed(void)
  * VtDraw -> VtDrawImages -> VtImgWrite path, averaged over REPLAY_REDRAWS, in microseconds
  * (E-clock). 0 when the timer is not open or no picture is shown. */
 #define REPLAY_REDRAWS 10
+static ULONG replayBlitUs;              /* H2c: the OS blit calls' share of one redraw, us */
 static ULONG ReplayRedrawUs(void)
 {
     struct EClockVal a, b;
@@ -3512,10 +3513,14 @@ static ULONG ReplayRedrawUs(void)
 
     if (!tickOpen || !vtTerm || !vt_images(vtTerm))
         return 0;
+    vtImgBlitCounts = 0;
+    vtImgTime = TRUE;
     perSecond = ReadEClock(&a);
     for (i = 0; i < REPLAY_REDRAWS; i++)
         VtDraw(NULL, 0, 0, term_cols, term_rows);
     ReadEClock(&b);
+    vtImgTime = FALSE;
+    replayBlitUs = perSecond ? ((vtImgBlitCounts / REPLAY_REDRAWS) * 1000UL) / (perSecond / 1000UL) : 0;
     if (vtImgRuns == runs0 || !perSecond)
         return 0;                       /* nothing was blitted: no number */
     {
@@ -3534,7 +3539,7 @@ static void ReplayReport(void)
     ULONG redrawUs = ReplayRedrawUs();
 
     Printf("replay: canvas=%lu blits=%lu feed_ticks=%lu\n", VtCanvasSum(), vtImgRuns, replayTicks);
-    Printf("replay: redraw_us=%lu redraw_n=%lu\n", redrawUs, (ULONG)REPLAY_REDRAWS);
+    Printf("replay: redraw_us=%lu blit_us=%lu redraw_n=%lu\n", redrawUs, replayBlitUs, (ULONG)REPLAY_REDRAWS);
     replayPending = FALSE;
 }
 

@@ -110,6 +110,11 @@ static UBYTE vtImgBuf[8 * VT_IMG_W];    /* one cell row of a run: 8 pixels high 
 static UBYTE vtImgMap[256];             /* the picture's palette index -> screen pen */
 static long vtImgSerial = -1;           /* the picture vtImgMap was made for */
 static unsigned long vtImgRuns;         /* sentinel: picture runs written */
+/* Plan H2c: --replay times the OS blit calls alone (E-clock counts summed while
+ * vtImgTime is set), so a redraw splits into blit time and the rest. */
+extern struct Device *TimerBase;
+static BOOL vtImgTime;
+static ULONG vtImgBlitCounts;
 
 /* FNV-1a over the RIPscrip canvas, one byte a pixel: the same sum as vtcon's
  * tests/test_rip.c canvas_sum, so a run here compares with its goldens. 0 when
@@ -152,6 +157,8 @@ static void VtImgColours(const vt_image_view *v)
         vtImgMap[i] = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v->pal[i] & 0xFFFFFFUL)))];
 }
 
+static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, LONG stride);
+
 /* w x h pixels of v from (sx, sy) to RastPort pixel (dx, dy). */
 static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h, WORD dx, WORD dy)
 {
@@ -171,6 +178,21 @@ static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h,
     }
     vtImgRuns++;
     term_blit_sync();                   /* the glyph blits are done with the planes */
+    if (vtImgTime) {
+        struct EClockVal a, b;
+
+        ReadEClock(&a);
+        VtImgBlit(rp, dx, dy, w, h, stride);
+        ReadEClock(&b);
+        vtImgBlitCounts += b.ev_lo - a.ev_lo;   /* one blit is far below 2^32 counts */
+        return;
+    }
+    VtImgBlit(rp, dx, dy, w, h, stride);
+}
+
+/* vtImgBuf (rows of stride bytes) to RastPort pixel (dx, dy), w x h. */
+static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, LONG stride)
+{
     if (((struct Library *)GfxBase)->lib_Version >= 40) {
         WriteChunkyPixels(rp, dx, dy, dx + w - 1, dy + h - 1, vtImgBuf, stride);
     } else if (((struct Library *)GfxBase)->lib_Version >= 39) {
