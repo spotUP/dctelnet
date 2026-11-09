@@ -3520,7 +3520,7 @@ static ULONG ReplayRedrawUs(void)
         VtDraw(NULL, 0, 0, term_cols, term_rows);
     ReadEClock(&b);
     vtImgTime = FALSE;
-    replayBlitUs = perSecond ? ((vtImgBlitCounts / REPLAY_REDRAWS) * 1000UL) / (perSecond / 1000UL) : 0;
+    replayBlitUs = VtEClockUs(vtImgBlitCounts, REPLAY_REDRAWS, perSecond);
     if (vtImgRuns == runs0 || !perSecond)
         return 0;                       /* nothing was blitted: no number */
     {
@@ -3529,8 +3529,7 @@ static ULONG ReplayRedrawUs(void)
 
         if (hi)
             return 0xFFFFFFFFUL;
-        /* us = counts / N * 1000 / (perSecond / 1000); exact to 0.1 percent, no overflow below 4 s */
-        return ((lo / REPLAY_REDRAWS) * 1000UL) / (perSecond / 1000UL);
+        return VtEClockUs(lo, REPLAY_REDRAWS, perSecond);
     }
 }
 

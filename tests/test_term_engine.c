@@ -1846,6 +1846,12 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     assert(vtImgRuns > 0 && vtImgBlitCounts == 7 * vtImgRuns);
     VtDraw(NULL, 0, 0, term_cols, term_rows);
     assert(vtImgBlitCounts == 7 * (vtImgRuns / 2));
+    /* A500 size: 9 s per redraw over 10 redraws on the PAL E-clock. The old
+     * (counts / n) * 1000 wrapped past 2^32 here and printed a small number. */
+    assert(VtEClockUs(709379UL * 90, 10, 709379UL) == 9000000UL);
+    assert(VtEClockUs(709379UL, 1, 709379UL) == 1000000UL);
+    assert(VtEClockUs(354689UL, 1, 709379UL) == 499999UL);
+    assert(VtEClockUs(5, 0, 709379UL) == 0 && VtEClockUs(5, 1, 0) == 0);
 }
 
 /* RIP palette entry 0 is a real colour: set non-black, the canvas pixels of

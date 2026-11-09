@@ -116,6 +116,22 @@ extern struct Device *TimerBase;
 static BOOL vtImgTime;
 static ULONG vtImgBlitCounts;
 
+/* E-clock counts over n runs as microseconds per run, without 64-bit maths.
+ * (counts / n) * 1000 wraps past 2^32 at about 6 s per run on a 709379 Hz
+ * PAL E-clock (an A500 RIP redraw is slower than that), so the whole seconds
+ * and the remainder are scaled apart: no overflow below about 4294 s. */
+static ULONG VtEClockUs(ULONG counts, ULONG n, ULONG perSecond)
+{
+    ULONG c, r;
+
+    if (!n || !perSecond)
+        return 0;
+    c = counts / n;
+    r = c % perSecond;
+    return (c / perSecond) * 1000000UL + ((r * 1000UL) / perSecond) * 1000UL
+         + (((r * 1000UL) % perSecond) * 1000UL) / perSecond;
+}
+
 /* FNV-1a over the RIPscrip canvas, one byte a pixel: the same sum as vtcon's
  * tests/test_rip.c canvas_sum, so a run here compares with its goldens. 0 when
  * the terminal holds no canvas. Used by `DCTelnet --replay`. */
