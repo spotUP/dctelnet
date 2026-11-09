@@ -122,7 +122,8 @@ struct PrefsStruct
 
     // Added after the first 2.x files: a shorter file loads with these 0.
     UBYTE TermType;             // TERMTYPE_AUTO (0), _BBS, _UNIX, _PETSCII (below)
-    UBYTE Reserved[3];          // keeps the struct a multiple of 4; a new UBYTE field takes one
+    UBYTE RipMode;             // RIPMODE_AUTO (0), _OFF, _ON (below): RIPscrip graphics
+    UBYTE Reserved[2];          // keeps the struct a multiple of 4; a new UBYTE field takes one
 };
 
 /*
@@ -181,6 +182,13 @@ struct PrefsStruct
 #define TERMTYPE_BBS  1  // PC ANSI (BBS art), whatever the Character Set
 #define TERMTYPE_UNIX 2  // xterm, whatever the Character Set
 #define TERMTYPE_PETSCII 3  // a Commodore 64 board: the C64 display and font, PETSCII keys
+
+// RIPscrip (prefs.RipMode). 0 is Auto so a file from before the field loads as Auto.
+// Auto and On both hand the engine vt_set_rip(1); Off hands it 0 (vtbuiltin.c VtApplyRip).
+#define RIPMODE_AUTO 0      // RIP graphics when the host sends ESC[! or a valid !| line
+#define RIPMODE_OFF  1      // every byte is text
+#define RIPMODE_ON   2      // RIP graphics from the start
+#define Prefs_RipEnabled(p) ((p)->RipMode != RIPMODE_OFF)
 
 // The one predicate for PETSCII (was the State flag APP_OLD_PETSCII_MODE).
 #define Prefs_IsPetscii(p) ((p)->TermType == TERMTYPE_PETSCII)

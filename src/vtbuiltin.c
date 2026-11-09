@@ -490,6 +490,16 @@ static void VtApplyPersonality(void)
     vt_set_charset(vtTerm, pers.charset);
 }
 
+/* RIPscrip (Terminal > RIPscrip, prefs.RipMode): at open, when the menu or a
+ * site changes it. The engine has two states: 0 is plain text, 1 installs the
+ * RIP adapter, which answers ESC[! and draws the !| lines (a line that is not
+ * RIP stays text). Auto and On both map to 1; Off to 0, which drops a canvas. */
+static void VtApplyRip(void)
+{
+    if (vtTerm)
+        vt_set_rip(vtTerm, Prefs_RipEnabled(&prefs) ? 1 : 0);
+}
+
 static void VtSniffReset(void)
 {
     Vt_Utf8SnifferReset(&vtSniff);
@@ -711,6 +721,7 @@ static int VtOpen(void)
     vt_set_cell_pixels(vtTerm, 1 << term_xs, 8);       /* pictures are placed on these cells */
     VtSetAspect();
     VtApplyPersonality();
+    VtApplyRip();
     Vt_MouseReset(&vtMouse);
     vtTitleSeen[0] = vtTitleShown[0] = 0;
     TerminalMouseReport();

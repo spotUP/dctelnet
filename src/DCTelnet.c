@@ -179,6 +179,10 @@ static struct NewMenu mainMenuDesc[] =
     {       NM_SUB, "BBS",                           0 ,       CHECKIT,       ~2L & 15, (APTR)MENU_TERMTYPE_BBS},
     {       NM_SUB, "Unix",                          0 ,       CHECKIT,       ~4L & 15, (APTR)MENU_TERMTYPE_UNIX},
     {       NM_SUB, "PETSCII",                       0 ,       CHECKIT,       ~8L & 15, (APTR)MENU_TERMTYPE_PETSCII},
+    {    NM_ITEM, "RIPscrip",                        0 ,             0,               0, (APTR)MENU_RIP},
+    {       NM_SUB, "Auto",                          0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_RIP_AUTO},
+    {       NM_SUB, "Off",                           0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_RIP_OFF},
+    {       NM_SUB, "On",                            0 ,       CHECKIT,       ~4L & 7, (APTR)MENU_RIP_ON},
     {    NM_ITEM, "Bell",                            0 ,             0,               0, (APTR)MENU_BELL},
     {       NM_SUB, "Flash",                         0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_BELL_FLASH},
     {       NM_SUB, "Sound",                         0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_BELL_SOUND},
@@ -1131,6 +1135,7 @@ BOOL BeginEntrySession(ULONG settingsId, const struct SiteSettings *entry)
         ReloadXemOptions();
         RequestDisplayReopen(&before);
         VtApplyPersonality();            // the Terminal Type of the site or the settings
+        VtApplyRip();
     }
     SyncPetsciiDisplay();
     handBaseline = prefs;
@@ -1216,6 +1221,7 @@ void EndEntrySession(void)
             ReloadXemOptions();
         RequestDisplayReopen(&before);
         VtApplyPersonality();            // the Terminal Type of the site or the settings
+        VtApplyRip();
     }
     SyncPetsciiDisplay();
     handBaseline = prefs;
@@ -4722,6 +4728,13 @@ static void GetWindowMsg(struct Window *wwin)
                         SyncPetsciiDisplay();
                         break;
 
+                    case MENU_RIP_AUTO:
+                    case MENU_RIP_OFF:
+                    case MENU_RIP_ON:
+                        prefs.RipMode = (UBYTE)((ULONG)GTMENUITEM_USERDATA(item) - MENU_RIP_AUTO);
+                        VtApplyRip();
+                        break;
+
                     case MENU_COPY:
                         if (selShown)
                             CopyRange(&selShownRange);
@@ -4896,6 +4909,8 @@ static void GetWindowMsg(struct Window *wwin)
                         {
                             RequestDisplayReopen(&before);
                             VtApplyPersonality();            // the Terminal Type of the site or the settings
+                            VtApplyRip();
+        VtApplyRip();
                         }
                         break;
                     }

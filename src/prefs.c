@@ -106,6 +106,7 @@ static void ValidateAndInitPrefs(BOOL *userMustChooseAScreenMode)
         prefs.nScrollbackLines = 300;
 
     if (prefs.TermType > TERMTYPE_PETSCII) prefs.TermType = TERMTYPE_AUTO;
+    if (prefs.RipMode > RIPMODE_ON) prefs.RipMode = RIPMODE_AUTO;
 
     // Fixed-size strings: guarantee nul-termination before any further use, then fall back to
     // defaults when empty.

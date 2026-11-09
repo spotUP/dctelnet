@@ -76,6 +76,10 @@ enum MenuItemID
             MENU_TERMTYPE_BBS,      //   MENU_TERMTYPE_AUTO is the prefs.h
             MENU_TERMTYPE_UNIX,     //   TERMTYPE_ value
             MENU_TERMTYPE_PETSCII,
+        MENU_RIP,
+            MENU_RIP_AUTO,          // AUTO, OFF, ON in this order: minus
+            MENU_RIP_OFF,           //   MENU_RIP_AUTO is the prefs.h
+            MENU_RIP_ON,            //   RIPMODE_ value
         MENU_BELL,
             MENU_BELL_FLASH,        // FLASH, SOUND, OFF in this order (prefs.h)
             MENU_BELL_SOUND,

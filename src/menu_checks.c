@@ -71,6 +71,10 @@ BOOL MenuChecks_Checked(const struct PrefsStruct *p, enum MenuItemID id, BOOL *c
     case MENU_TERMTYPE_UNIX: *checked = (p->TermType == TERMTYPE_UNIX); return TRUE;
     case MENU_TERMTYPE_PETSCII: *checked = Prefs_IsPetscii(p); return TRUE;
 
+    case MENU_RIP_AUTO: *checked = (p->RipMode == RIPMODE_AUTO); return TRUE;
+    case MENU_RIP_OFF:  *checked = (p->RipMode == RIPMODE_OFF);  return TRUE;
+    case MENU_RIP_ON:   *checked = (p->RipMode == RIPMODE_ON);   return TRUE;
+
     case MENU_ICE_COLOURS: *checked = (p->Blink == BLINK_ICE); return TRUE;
 
     case MENU_ANSI_MUSIC: *checked = p->AnsiMusic ? TRUE : FALSE; return TRUE;
