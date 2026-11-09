@@ -1986,6 +1986,29 @@ static void test_rip_h5_click_reaches_the_reply_path(void)
     VtClose();
 }
 
+/* H5: a RIPscrip button's hotkey (1U, here 1T = 'A') sent as a typed character reaches the
+ * reply path with the button's command; any other character sends nothing. */
+static void test_rip_h5_hotkey_reaches_the_reply_path(void)
+{
+    xterm_begin();
+    vt_put("\033[!");
+    assert(vt_rip_active(vtTerm) == 1);
+    vt_put("!|c0F\r\n" "!|1U0K0K28141T00<>Alpha<>alpha^M\r\n");
+    assert(vt_rip_mouse_fields(vtTerm) == 1);                   /* the sentinel: the button is defined */
+    sentLen = 0; sentCalls = 0;
+
+    assert(VtRipKey('x') == FALSE);
+    assert(sentCalls == 0 && sentLen == 0);
+
+    assert(VtRipKey('A') == TRUE);
+    assert(sentCalls == 1 && sentLen == 6 && memcmp(sentBuf, "alpha\r", 6) == 0);
+
+    sentLen = 0; sentCalls = 0;
+    assert(VtRipKey('a') == TRUE);                              /* case-insensitive */
+    assert(sentCalls == 1 && sentLen == 6 && memcmp(sentBuf, "alpha\r", 6) == 0);
+    VtClose();
+}
+
 /* The RIP switch is temporary for the run: in a quick connect (no entry
  * session) the live prefs are what SavePrefs writes, so what it would save
  * must still be the pre-RIP screen and renderer while RIP is active. */
@@ -2083,6 +2106,7 @@ int main(void)
     test_rip_fonts_preference_reaches_the_engine();
     test_rip_h4_the_screen_switch_is_wired_through_the_data_path();
     test_rip_h5_click_reaches_the_reply_path();
+    test_rip_h5_hotkey_reaches_the_reply_path();
     test_rip_h4_the_screen_switch_never_reaches_the_prefs_file();
     printf("term_engine: all assertions passed\n");
     return 0;
