@@ -1737,8 +1737,9 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     memset(chunkyFb, 0xFF, sizeof(chunkyFb));
     chunkyCalls = 0;
     vtImgRuns = 0;
-    vt_set_rip(vtTerm, 1);
-    vt_put("\033[2!");
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();                           /* the preference, not the engine call, turns RIP on */
+    vt_put("\033[2!\r\n");                  /* a RIP line starts a line */
     /* fill style solid, colour 9; bar (10,10)-(100,100) */
     vt_put("!|S0109|B0A0A2S2S\r\n");
     assert(vt_images(vtTerm) == 1);
@@ -1755,6 +1756,50 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     vtImgRuns = 0;
     vt_put("!|S0101|B0A0A2S2S\r\n");
     assert(vtImgRuns > 0);
+}
+
+/* RIP-H3: the per-site RIPscrip preference reaches the engine. The test drives
+ * VtApplyRip (open, menu and site change all call it) and the byte path VtWrite:
+ * Off leaves the RIP line as text (no canvas, no parsed command); Auto and On
+ * draw it; Off again drops the canvas. vt_rip_commands is the sentinel that the
+ * adapter ran. */
+static const char ripLine[] = "!|S0109|B0A0A2S2S\r\n";
+
+static void rip_h3_feed_with(UBYTE mode, int *images, long *cmds)
+{
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    assert(vt_images(vtTerm) == 0);
+    prefs.RipMode = mode;
+    VtApplyRip();
+    vt_put(ripLine);
+    *images = vt_images(vtTerm);
+    *cmds = vt_rip_commands(vtTerm);
+}
+
+static void test_rip_h3_the_ripscrip_preference_reaches_the_engine(void)
+{
+    int images, n;
+    long cmds;
+    const vt_cell *row;
+
+    rip_h3_feed_with(RIPMODE_OFF, &images, &cmds);
+    assert(images == 0 && cmds == 0);
+    row = vt_row(vtTerm, 1, &n);
+    assert(n >= 3 && row[0].ch == '!' && row[1].ch == '|' && row[2].ch == 'S');   /* kept as text */
+
+    rip_h3_feed_with(RIPMODE_ON, &images, &cmds);
+    assert(images == 1 && cmds >= 2);
+
+    rip_h3_feed_with(RIPMODE_AUTO, &images, &cmds);     /* the default; the engine treats a valid line as RIP */
+    assert(images == 1 && cmds >= 2);
+
+    prefs.RipMode = RIPMODE_OFF;                        /* changed while connected */
+    VtApplyRip();
+    assert(vt_rip_commands(vtTerm) == 0);               /* the adapter is gone: the next RIP line stays text */
+    images = vt_images(vtTerm);
+    vt_put(ripLine);
+    assert(vt_images(vtTerm) == images);
 }
 
 int main(void)
@@ -1811,6 +1856,7 @@ int main(void)
     test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answered();
     test_kg10_the_screens_pixel_aspect_reaches_the_engine();
     test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque();
+    test_rip_h3_the_ripscrip_preference_reaches_the_engine();
     printf("term_engine: all assertions passed\n");
     return 0;
 }
