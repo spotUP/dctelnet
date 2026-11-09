@@ -1410,6 +1410,7 @@ static void RunPendingConnect(void)
         Charset_Utf8Init(&utf8Echo);
         Charset_Utf8Init(&utf8Sb);
         VtSniffReset();                         // MA2-14: this connection has seen no UTF-8 yet
+        VtSetDownloadHost(pendingConnect.host); // inline=0 files go in this site's folder
         AnsiMusic_Init(&ansiMusic);
         MusicHoldDrop();
         if (STATE_IS(APP_SSH))                  // SSH: the encrypted login first
