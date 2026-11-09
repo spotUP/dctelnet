@@ -57,6 +57,27 @@ static void test_apply_takes_only_overridden_groups(void) {
     assert(live.MainWinLeftEdge == 42);
 }
 
+/* H4: the RIPscrip screen choice (mode, DisplayID, size) is a Terminal member. */
+static void test_the_rip_screen_choice_belongs_to_the_terminal_group(void) {
+    struct PrefsStruct global = make(0, "IBM.font", 8), live, e = make(0, "IBM.font", 8);
+    struct SiteSettings entry;
+
+    e.RipScreen = RIPSCREEN_MODE; e.RipDisplayID = 0x29000; e.RipWidth = 640; e.RipHeight = 480;
+    live = global; entry = entry_with(SITE_GROUP_TERMINAL, e);
+    SitePrefs_ApplyEntry(&live, &global, &entry);
+    assert(live.RipScreen == RIPSCREEN_MODE && live.RipDisplayID == 0x29000);
+    assert(live.RipWidth == 640 && live.RipHeight == 480);
+
+    live = global; entry = entry_with(SITE_GROUP_SCREEN, e);
+    SitePrefs_ApplyEntry(&live, &global, &entry);
+    assert(live.RipScreen == RIPSCREEN_DEFAULT && live.RipDisplayID == 0);
+
+    global = e; live = e; e.RipScreen = RIPSCREEN_FIT;
+    assert(SitePrefs_DifferingGroups(&live, &e, (const TEXT *)"", (const TEXT *)"") & SITE_GROUP_TERMINAL);
+    e = live; e.RipDisplayID = 0x11000;
+    assert(SitePrefs_DifferingGroups(&live, &e, (const TEXT *)"", (const TEXT *)"") & SITE_GROUP_TERMINAL);
+}
+
 static void test_each_group_moves_only_its_members(void) {
     struct PrefsStruct global = make(0, "IBM.font", 8), live;
     struct PrefsStruct e = make(APP_RETURN_SENDING_CRLF | APP_FULLSCREEN | APP_RAW_CONNECTION,
@@ -512,6 +533,7 @@ int main(void) {
     test_login_macro_expands_codes();
     test_sidecar_round_trip_and_rejects();
     test_apply_takes_only_overridden_groups();
+    test_the_rip_screen_choice_belongs_to_the_terminal_group();
     test_each_group_moves_only_its_members();
     test_a_dcs1_snapshot_loads_as_all_groups();
     test_a_dcs4_file_from_before_v2_loads();

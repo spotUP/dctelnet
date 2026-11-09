@@ -76,6 +76,16 @@ enum MenuItemID
             MENU_TERMTYPE_BBS,      //   MENU_TERMTYPE_AUTO is the prefs.h
             MENU_TERMTYPE_UNIX,     //   TERMTYPE_ value
             MENU_TERMTYPE_PETSCII,
+        MENU_RIP,
+            MENU_RIP_AUTO,          // AUTO, OFF, ON in this order: minus
+            MENU_RIP_OFF,           //   MENU_RIP_AUTO is the prefs.h
+            MENU_RIP_ON,            //   RIPMODE_ value
+        MENU_RIPFONT,
+            MENU_RIPFONT_STROKE,    // STROKE, BITMAP in this order: minus
+            MENU_RIPFONT_BITMAP,    //   MENU_RIPFONT_STROKE is the prefs.h RIPFONT_ value
+        MENU_RIPSCREEN,
+            MENU_RIPSCREEN_FIT,     // checked when prefs.RipScreen is RIPSCREEN_FIT
+            MENU_RIPSCREEN_MODE,    // the requester (no check mark)
         MENU_BELL,
             MENU_BELL_FLASH,        // FLASH, SOUND, OFF in this order (prefs.h)
             MENU_BELL_SOUND,
@@ -149,6 +159,7 @@ BOOL SessionOverridesKeyboard(void);
 UWORD LegacyPen(UWORD ibmconIndex);
 void AdoptEntrySession(ULONG settingsId, ULONG groups);
 BOOL ScreenModeInto(struct PrefsStruct *target);
+BOOL RipScreenModeInto(struct PrefsStruct *target);
 const struct PrefsStruct *GlobalSettings(void);
 const TEXT *GlobalFKeys(void);
 const struct PrefsStruct *ConnectBaseSettings(void);

@@ -10,7 +10,7 @@ CFLAGS := -std=c99 -Wall -Wextra -Werror -I../src
 STACK_MAX := 400
 STACKCHK := $(shell $(CC) -Werror -Wstack-usage=$(STACK_MAX) -c -x c /dev/null -o /dev/null 2>/dev/null && echo -Wstack-usage=$(STACK_MAX))
 
-TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_renderer test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_connectaddr test_typed_send test_iconpens test_nearest_pen test_vtpersonality test_petscii_font test_vtshadow test_glyphraster test_vtpens test_vtinput test_mainstack test_recvgate
+TESTS := test_petscii_modules test_petscii_dispatch test_prefs_file test_site_prefs test_menu_checks test_palette test_screenfont test_progdir test_listsel test_textedit test_dsr test_keys test_clip test_ansiscan test_ticks test_renderer test_rexx test_rlogin test_ansimusic test_booklist test_crypto test_ssh test_knownhosts test_term_engine test_connectaddr test_typed_send test_iconpens test_nearest_pen test_vtpersonality test_petscii_font test_vtshadow test_glyphraster test_vtpens test_vtinput test_mainstack test_kitty_engine test_recvgate
 
 # The test programs are host executables, but make only compares
 # timestamps. Docker "make ci" (Linux) and "make host-ci" (macOS) share this
@@ -305,10 +305,16 @@ test_vtpens: test_vtpens.c ../src/vtpens.c ../src/vtpens.h $(VTCON)/engine/vteng
 test_glyphraster: test_glyphraster.c ../src/glyphraster.c ../src/glyphraster.h $(VTCON)/render/glyphmap.c $(VTCON)/engine/vtengine.c
 	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim -I$(VTCON)/engine -I$(VTCON)/render -o $@ test_glyphraster.c ../src/glyphraster.c $(VTCON)/render/glyphmap.c $(VTCON)/engine/vtengine.c
 
-test_term_engine: test_term_engine.c ../src/third_party/retro32-term/term-engine.c ../src/vtbuiltin.c ../src/vtpersonality.c ../src/glyphraster.c ../src/glyphraster.h ../src/screenfont.c ../src/vtpens.c ../src/vtinput.c ../src/vtinput.h \
+# KG-7: vtcon's kitty suite and harness, built against the pinned engine
+# exactly as vtcon builds them (VT_COUNT_ALLOC: the harness counts blocks).
+test_kitty_engine: test_kitty_engine.c $(VTCON)/tests/harness.c $(VTCON)/tests/test_kitty.c $(VTCON)/engine/vtengine.c $(VTCON)/engine/kitty.c $(VTCON)/engine/inflate.c $(VTCON)/engine/png.c
+	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -DVT_COUNT_ALLOC -I$(VTCON)/tests/exec_host -I$(VTCON)/engine \
+	      -o $@ test_kitty_engine.c $(VTCON)/tests/harness.c $(VTCON)/tests/test_kitty.c $(VTCON)/engine/vtengine.c
+
+test_term_engine: test_term_engine.c ../src/third_party/retro32-term/term-engine.c ../src/vtbuiltin.c ../src/vtpersonality.c ../src/glyphraster.c ../src/glyphraster.h ../src/screenfont.c ../src/vtpens.c ../src/vtinput.c ../src/vtinput.h ../src/site_prefs.c ../src/prefs_file.c ../src/palette.c \
                   $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
 	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim -I$(VTCON)/engine -I$(VTCON)/render \
-	      -o $@ test_term_engine.c ../src/glyphraster.c ../src/screenfont.c ../src/vtpersonality.c ../src/vtpens.c ../src/vtinput.c $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
+	      -o $@ test_term_engine.c ../src/glyphraster.c ../src/screenfont.c ../src/vtpersonality.c ../src/vtpens.c ../src/vtinput.c ../src/site_prefs.c ../src/prefs_file.c ../src/palette.c $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
 
 # A PETSCII mode change (an Address Book entry starts or ends) must take the
 # full reopen on every renderer: OpenDisplay() drops the old mode's kept text

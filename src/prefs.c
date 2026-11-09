@@ -106,6 +106,13 @@ static void ValidateAndInitPrefs(BOOL *userMustChooseAScreenMode)
         prefs.nScrollbackLines = 300;
 
     if (prefs.TermType > TERMTYPE_PETSCII) prefs.TermType = TERMTYPE_AUTO;
+    if (prefs.RipMode > RIPMODE_ON) prefs.RipMode = RIPMODE_AUTO;
+    if (prefs.RipFonts > RIPFONT_BITMAP) prefs.RipFonts = RIPFONT_STROKE;
+    if (prefs.RipScreen > RIPSCREEN_MODE) prefs.RipScreen = RIPSCREEN_DEFAULT;
+    // A chosen mode that is not one the requester offers (a hand-edited file): back to the default.
+    if (prefs.RipScreen == RIPSCREEN_MODE
+        && (prefs.RipDisplayID == 0 || prefs.RipWidth < RIP_MIN_WIDTH || prefs.RipHeight < RIP_MIN_HEIGHT))
+        prefs.RipScreen = RIPSCREEN_DEFAULT;
 
     // Fixed-size strings: guarantee nul-termination before any further use, then fall back to
     // defaults when empty.

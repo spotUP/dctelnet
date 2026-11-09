@@ -17,7 +17,7 @@ struct Library { UWORD lib_Version; };
 struct GfxBase { struct Library LibNode; };
 struct BitMap { UWORD BytesPerRow, Rows; UBYTE Flags, Depth; UWORD pad; UBYTE *Planes[8]; };
 struct TextFont { UWORD tf_YSize, tf_XSize, tf_Baseline; UBYTE tf_LoChar, tf_HiChar; void *tf_CharData; UWORD tf_Modulo; void *tf_CharLoc; };
-struct RastPort { struct BitMap *BitMap; UBYTE Mask, FgPen, BgPen, DrawMode; WORD cx, cy; struct TextFont *Font; };
+struct RastPort { struct BitMap *BitMap; UBYTE Mask, FgPen, BgPen, DrawMode; WORD cx, cy; struct TextFont *Font; struct Layer *Layer; };
 struct Rectangle { WORD MinX, MinY, MaxX, MaxY; };
 struct Layer { struct Layer *back; struct Rectangle bounds; };
 struct Layer_Info { struct Layer *top_layer; };
@@ -104,6 +104,35 @@ static void RectFill(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
     else
         call("RectFill(%ld,%ld,%ld,%ld pen%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)rp->FgPen);
 }
+/* Pictures (kitty graphics): the chunky writes, one line each with the
+ * first pixel's pen. */
+static int chunkyCalls;
+#define FB_W 700
+#define FB_H 420
+static UBYTE chunkyFb[FB_W * FB_H];     /* the last pen written at each pixel, 0xFF where none */
+static void WriteChunkyPixels(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, UBYTE *a, LONG mod)
+{
+    LONG x, y, stride = mod ? mod : x1 - x0 + 1;
+    (void)rp;
+    chunkyCalls++;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++)
+            if (x >= 0 && x < FB_W && y >= 0 && y < FB_H)
+                chunkyFb[y * FB_W + x] = a[(y - y0) * stride + (x - x0)];
+    call("Chunky(%ld,%ld,%ld,%ld pen%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)a[0]);
+}
+static LONG WritePixelArray8(struct RastPort *rp, ULONG x0, ULONG y0, ULONG x1, ULONG y1, UBYTE *a, struct RastPort *tmp)
+{
+    (void)tmp;
+    WriteChunkyPixels(rp, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1, a, 0);
+    return 0;
+}
+static struct BitMap *AllocBitMap(ULONG w, ULONG h, ULONG d, ULONG f, struct BitMap *friendBm)
+{
+    (void)w; (void)h; (void)d; (void)f;
+    return friendBm;
+}
+static void FreeBitMap(struct BitMap *b) { (void)b; }
 static void ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0, LONG x1, LONG y1)
 {
     char line[160];
@@ -169,6 +198,9 @@ static struct Window window, *win = &window;
 #define IDCMP_RAWKEY 0x400UL
 static char MainWindowTitle[] = "DCTelnet own title";
 #define WFLG_BACKDROP 0x100UL
+#define WFLG_GIMMEZEROZERO 0x400000UL
+#define IEQUALIFIER_LSHIFT 0x0001
+#define IEQUALIFIER_RSHIFT 0x0002
 static char titleSet[256];
 static const UBYTE *screenTitleSet;     /* (UBYTE *)-1 when the screen title stays */
 static int titleCalls;
@@ -216,15 +248,65 @@ static void probe_glyph(WORD x, UBYTE ch)
 }
 #define term_glyph(x, c) probe_glyph((x), (c))
 #include "vtengine.h"
+/* KG-10: the screen's display mode and its pixel aspect. modeRes is what
+ * GetDisplayInfoData reports (0: the mode is unknown); aspectCalls and
+ * aspectRx/Ry record what VtSetAspect handed the engine. */
+struct DisplayInfo { struct { UWORD x, y; } Resolution; };
+#define DTAG_DISP 0x80001000UL
+#define INVALID_ID (~0UL)
+static int modeRx, modeRy;
+static int aspectCalls, aspectRx, aspectRy;
+static ULONG GetVPModeID(struct ViewPort *vp) { (void)vp; return 0x29000UL; }
+static long GetDisplayInfoData(void *h, UBYTE *buf, ULONG size, ULONG tag, ULONG id)
+{
+    struct DisplayInfo *di = (struct DisplayInfo *)buf;
+    (void)h; (void)size; (void)id;
+    assert(tag == DTAG_DISP);
+    if (!modeRx)
+        return 0;
+    di->Resolution.x = (UWORD)modeRx;
+    di->Resolution.y = (UWORD)modeRy;
+    return 1;
+}
+static void probe_aspect(vt_term *t, int rx, int ry);
+#define vt_set_pixel_aspect(t, rx, ry) probe_aspect((t), (rx), (ry))
 /* The sentinel for VtOpen: what the global vtTerm is while vt_new() draws. */
 static int newCalls;
 static int newSawTerm;
 static int newSb;                   /* the scrollback line count VtOpen handed vt_new */
 static vt_term *probe_new(int cols, int rows, int sb, const vt_callbacks *cb, void *user);
 #define vt_new(c, r, sb, cb, u) probe_new((c), (r), (sb), (cb), (u))
+/* H4: DCTelnet.c's reopen hook and default-screen rule, as counting stubs. */
+static int ripReopens, ripDefaultAsked;
+static ULONG ripReopenDisplayID, ripReopenWas;
+static ULONG ripReopenRenderer;
+static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h)
+{
+    ripDefaultAsked++;
+    *id = 0x91000UL; *w = 640; *h = 400;
+    return FALSE;
+}
+static void VtRipScreenChanged(const struct PrefsStruct *before)
+{
+    ripReopens++;
+    ripReopenWas = before->DisplayID;
+    ripReopenDisplayID = prefs.DisplayID;
+    ripReopenRenderer = prefs.State & APP_RENDERER_ALL;
+}
+#include "site_prefs.h"
+struct SiteHandChanges handChanges;     /* DCTelnet.c's record of temporary changes */
+ULONG sessionSettingsId;                /* 0: a quick connect, no entry session */
 #include "../src/vtbuiltin.c"
 #undef term_glyph
 #undef vt_new
+#undef vt_set_pixel_aspect
+static void probe_aspect(vt_term *t, int rx, int ry)
+{
+    aspectCalls++;
+    aspectRx = rx;
+    aspectRy = ry;
+    vt_set_pixel_aspect(t, rx, ry);
+}
 static vt_term *probe_new(int cols, int rows, int sb, const vt_callbacks *cb, void *user)
 {
     newCalls++;
@@ -1610,6 +1692,391 @@ static void test_cursor_on_a_black_cell_is_white_at_16_and_32_colours_without_ex
     VtClose();
 }
 
+/* KG-8: a kitty picture that reaches DCTelnet's receive path (VtWrite,
+ * what ConWrite calls for the built-in renderer) is parsed and placed by
+ * the engine and drawn by VtDrawImages: the sentinel counts its runs, the
+ * chunky write gets the pen VtPenFor gives the picture's colour, and the
+ * a=q query is answered OK through send_data. */
+static void test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answered(void)
+{
+    char want[64];
+    UBYTE pen;
+
+    xterm_begin();
+    chunkyCalls = 0;
+    vtImgRuns = 0;
+    sentLen = 0;
+    /* 2 x 2 red pixels, 24-bit RGB, transmitted and shown at the cursor */
+    vt_put("\033_Gf=24,s=2,v=2,a=T;/wAA/wAA/wAA/wAA\033\\");
+    assert(vt_kitty_placed(vtTerm) == 1);
+    assert(vtImgRuns == 2);             /* kitty: one run per pixel row */
+    assert(chunkyCalls == 2);
+    pen = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | 0xFF0000UL))];
+    snprintf(want, sizeof(want), "Chunky(%d,%d,%d,%d pen%d)", TERM_PX(0), TERM_PY(0), TERM_PX(0) + 1, TERM_PY(0), pen);
+    assert(strstr(calls, want));
+    snprintf(want, sizeof(want), "Chunky(%d,%d,%d,%d pen%d)", TERM_PX(0), TERM_PY(0) + 1, TERM_PX(0) + 1, TERM_PY(0) + 1, pen);
+    assert(strstr(calls, want));
+    /* the support query: answered, nothing placed */
+    vt_put("\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\");
+    assert(sentLen > 0 && sentLen < (int)sizeof(sentBuf));
+    assert(sentLen == 12 && memcmp(sentBuf, "\033_Gi=31;OK\033\\", 12) == 0);
+    assert(vt_kitty_placed(vtTerm) == 1);
+}
+
+/* KG-10: VtOpen hands the engine the screen mode's Resolution as the pixel
+ * aspect (PAL hires 22:44 style), and square when the mode is unknown; a
+ * display reopen on another mode updates it. */
+static void test_kg10_the_screens_pixel_aspect_reaches_the_engine(void)
+{
+    modeRx = 22; modeRy = 44;
+    aspectCalls = 0;
+    xterm_begin();
+    assert(aspectCalls >= 1 && aspectRx == 22 && aspectRy == 44);
+    /* reopen on a square-pixel mode: the surviving engine is told again */
+    modeRx = 44; modeRy = 44;
+    aspectCalls = 0;
+    xterm_begin();
+    assert(aspectCalls >= 1 && aspectRx == 44 && aspectRy == 44);
+    /* unknown mode: square (0) */
+    modeRx = 0;
+    aspectCalls = 0;
+    xterm_begin();
+    assert(aspectCalls >= 1 && aspectRx == 0 && aspectRy == 0);
+}
+
+/* RIP-H2: a RIP canvas (vtengine image kind 4, z = -1, its own palette, index 0
+ * opaque) reaches the screen through VtWrite and VtDrawImages like a sixel:
+ * the filled bar gets the pen of its palette colour, and canvas index 0 around
+ * it is painted in the default background pen, not left as the text cell. */
+static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque(void)
+{
+    vt_image_view v;
+    unsigned long runs0;
+    UBYTE barpen, bgpen;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");                 /* no picture left from the tests before */
+    assert(vt_images(vtTerm) == 0);
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    chunkyCalls = 0;
+    vtImgRuns = 0;
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();                           /* the preference, not the engine call, turns RIP on */
+    vt_put("\033[2!\r\n");                  /* a RIP line starts a line */
+    /* fill style solid, colour 9; bar (10,10)-(100,100) */
+    vt_put("!|S0109|B0A0A2S2S\r\n");
+    assert(vt_images(vtTerm) == 1);
+    runs0 = vtImgRuns;
+    assert(runs0 > 0 && chunkyCalls > 0);       /* VtDrawImages ran for the canvas */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    assert(v.kitty == 0 && v.z < 0 && v.w == 640 && v.h == 350);
+    assert(v.pal[9] != 0 && v.pix[50 * 640 + 50] == 9 && v.pix[200 * 640 + 150] == 0);
+    barpen = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[9] & 0xFFFFFFUL)))];
+    bgpen = term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
+    assert(chunkyFb[(TERM_PY(0) + 50) * FB_W + TERM_PX(0) + 50] == barpen);     /* inside the bar */
+    assert(chunkyFb[(TERM_PY(0) + 200) * FB_W + TERM_PX(0) + 150] == bgpen);    /* index 0: painted, not skipped */
+    /* a later change redraws through the same path (the canvas serial moved) */
+    vtImgRuns = 0;
+    vt_put("!|S0101|B0A0A2S2S\r\n");
+    assert(vtImgRuns > 0);
+}
+
+/* RIP palette entry 0 is a real colour: set non-black, the canvas pixels of
+ * index 0 draw with that colour's pen, not the default background pen (only a
+ * sixel's index 0 means unset). */
+static void test_rip_index_0_is_the_palette_colour_not_the_background(void)
+{
+    vt_image_view v;
+    UBYTE pen0, bgpen;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[2!\r\n");
+    vt_put("!|a0004|S0109|B0A0A2S2S\r\n");   /* entry 0 -> EGA colour 4; a bar of colour 9 */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    assert(v.kitty == 0 && v.bg0 == 0 && v.pix[200 * 640 + 150] == 0);
+    assert((v.pal[0] & 0xFFFFFFUL) != 0);
+    pen0 = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[0] & 0xFFFFFFUL)))];
+    bgpen = term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
+    assert(pen0 != bgpen);
+    assert(chunkyFb[(TERM_PY(0) + 200) * FB_W + TERM_PX(0) + 150] == pen0);
+}
+
+/* RIP-H3: the per-site RIPscrip preference reaches the engine. The test drives
+ * VtApplyRip (open, menu and site change all call it) and the byte path VtWrite:
+ * Off leaves the RIP line as text (no canvas, no parsed command); Auto and On
+ * draw it; Off again drops the canvas. vt_rip_commands is the sentinel that the
+ * adapter ran. */
+static const char ripLine[] = "!|S0109|B0A0A2S2S\r\n";
+
+static void rip_h3_feed_with(UBYTE mode, int *images, long *cmds)
+{
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    assert(vt_images(vtTerm) == 0);
+    prefs.RipMode = mode;
+    VtApplyRip();
+    vt_put(ripLine);
+    *images = vt_images(vtTerm);
+    *cmds = vt_rip_commands(vtTerm);
+}
+
+static void test_rip_h3_the_ripscrip_preference_reaches_the_engine(void)
+{
+    int images, n;
+    long cmds;
+    const vt_cell *row;
+
+    rip_h3_feed_with(RIPMODE_OFF, &images, &cmds);
+    assert(images == 0 && cmds == 0);
+    row = vt_row(vtTerm, 1, &n);
+    assert(n >= 3 && row[0].ch == '!' && row[1].ch == '|' && row[2].ch == 'S');   /* kept as text */
+
+    rip_h3_feed_with(RIPMODE_ON, &images, &cmds);
+    assert(images == 1 && cmds >= 2);
+
+    rip_h3_feed_with(RIPMODE_AUTO, &images, &cmds);     /* the default; the engine treats a valid line as RIP */
+    assert(images == 1 && cmds >= 2);
+
+    /* Auto stays text until the host speaks RIP; On is active at once */
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    prefs.RipMode = RIPMODE_OFF;                        /* a fresh adapter: On -> Auto keeps the engine active */
+    VtApplyRip();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    assert(vt_rip_active(vtTerm) == 0);
+    vt_put("plain text\r\n");
+    assert(vt_rip_active(vtTerm) == 0 && vt_images(vtTerm) == 0);
+    vt_put("\033[!");
+    assert(vt_rip_active(vtTerm) == 1);
+    vt_put(ripLine);
+    assert(vt_images(vtTerm) == 1);
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    assert(vt_rip_active(vtTerm) == 1);
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    prefs.RipMode = RIPMODE_OFF;
+    VtApplyRip();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    vt_put(ripLine);                                    /* a valid !| line also starts Auto */
+    assert(vt_rip_active(vtTerm) == 1 && vt_images(vtTerm) == 1);
+
+    prefs.RipMode = RIPMODE_OFF;                        /* changed while connected */
+    VtApplyRip();
+    assert(vt_rip_commands(vtTerm) == 0);               /* the adapter is gone: the next RIP line stays text */
+    images = vt_images(vtTerm);
+    vt_put(ripLine);
+    assert(vt_images(vtTerm) == images);
+}
+
+/* The per-site RIPscrip Fonts preference reaches the engine through VtApplyRip:
+ * Stroke draws RIP font style 1 with Hershey strokes (the sentinel counts the
+ * stroke glyphs), Bitmap with the 8x8 font, and the canvas pixels differ. */
+static unsigned long rip_font_canvas_sum(UBYTE fonts, long *strokeGlyphs)
+{
+    vt_image_view v;
+    unsigned long sum = 0;
+    long i, g0 = vt_rip_stroke_glyphs();
+
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    prefs.RipMode = RIPMODE_OFF;
+    VtApplyRip();
+    prefs.RipMode = RIPMODE_ON;
+    prefs.RipFonts = fonts;
+    VtApplyRip();
+    vt_put("!|c0F|Y01000200|@2S3CHgRip, a|TZy&\r\n");   /* style 1 (triplex), size 2 */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    for (i = 0; i < (long)v.w * v.h; i++)
+        sum = sum * 31 + v.pix[i];
+    *strokeGlyphs = vt_rip_stroke_glyphs() - g0;
+    return sum;
+}
+
+static void test_rip_fonts_preference_reaches_the_engine(void)
+{
+    long strokeN, bitmapN;
+    unsigned long stroke = rip_font_canvas_sum(RIPFONT_STROKE, &strokeN);
+    unsigned long bitmap = rip_font_canvas_sum(RIPFONT_BITMAP, &bitmapN);
+
+    assert(strokeN > 0 && bitmapN == 0);
+    assert(stroke != bitmap);
+}
+
+/* H4: ESC[! through the data path (VtWrite) on Auto switches to the site's RIP
+ * screen once, a plain text session never does, RIP ending (ESC[1!) or the
+ * session ending puts the previous screen back. */
+static void test_rip_h4_the_screen_switch_is_wired_through_the_data_path(void)
+{
+    const ULONG siteMode = 0x29000UL, appMode = 0x11000UL;
+
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    VtRipEnd();
+    prefs.RipMode = RIPMODE_OFF;
+    VtApplyRip();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    prefs.DisplayID = appMode;
+    prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_CONSOLE_DEVICE;
+    prefs.RipScreen = RIPSCREEN_MODE;
+    prefs.RipDisplayID = siteMode; prefs.RipWidth = 640; prefs.RipHeight = 480;
+    ripReopens = 0; ripDefaultAsked = 0;
+
+    vt_put("plain text\r\nmore \033[1m bold\033[0m\r\n");
+    assert(ripReopens == 0 && prefs.DisplayID == appMode);
+
+    vt_put("\033[!");
+    assert(vt_rip_active(vtTerm) == 1);
+    assert(ripReopens == 1);                                /* the sentinel: the hook ran, once */
+    assert(ripReopenWas == appMode && ripReopenDisplayID == siteMode);
+    assert(ripReopenRenderer == APP_RENDERER_BUILTIN);      /* D4: the built-in renderer */
+    assert(prefs.DisplayWidth == 640 && prefs.DisplayHeight == 480);
+    assert(ripDefaultAsked == 0);                           /* a chosen mode needs no default */
+    vt_put("more RIP\r\n");
+    assert(ripReopens == 1);                                /* not again while it stays active */
+
+    vt_put("\033[1!");                                      /* RIP off: the screen as it was */
+    assert(vt_rip_active(vtTerm) == 0);
+    assert(ripReopens == 2 && prefs.DisplayID == appMode);
+    assert((prefs.State & APP_RENDERER_ALL) == APP_RENDERER_CONSOLE_DEVICE);
+
+    prefs.RipScreen = RIPSCREEN_DEFAULT;                    /* no site mode: the default rule decides */
+    vt_put("\033[!");
+    assert(ripReopens == 3 && ripDefaultAsked == 1 && prefs.DisplayID == 0x91000UL);
+    VtRipEnd();                                             /* the session ends */
+    assert(ripReopens == 4 && prefs.DisplayID == appMode);
+    assert((prefs.State & APP_RENDERER_ALL) == APP_RENDERER_CONSOLE_DEVICE);
+    prefs.RipScreen = RIPSCREEN_DEFAULT;
+    prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_BUILTIN;
+}
+
+/* H5 (D22): a plain left click on a RIPscrip mouse field sends the field's command through
+ * the reply path (send_data) and is consumed; Shift or a click outside sends nothing, and
+ * a button's hotkey sends the same bytes. */
+static void test_rip_h5_click_reaches_the_reply_path(void)
+{
+    const int cx = TERM_PX(0) + 15, cy = TERM_PY(0) + 15;   /* inside the field 10,10 - 40,40 (base 36: 14 is 40) */
+    UWORD noShift = 0, shift = IEQUALIFIER_LSHIFT;
+
+    xterm_begin();
+    window.Flags = 0;
+    vt_put("\033[!");
+    assert(vt_rip_active(vtTerm) == 1);
+    vt_put("!|c0F\r\n" "!|L00000A0A\r\n" "!|1M000A0A1414" "1000000go^M\r\n");
+    assert(vt_rip_mouse_fields(vtTerm) == 1);                   /* the sentinel: the field is defined */
+    sentLen = 0; sentCalls = 0;
+
+    assert(VtRipClick((WORD)cx, (WORD)cy, shift) == FALSE);     /* Shift keeps selecting */
+    assert(VtRipClick((WORD)(TERM_PX(0) + 300), (WORD)(TERM_PY(0) + 300), noShift) == FALSE);
+    assert(sentCalls == 0 && sentLen == 0);
+
+    assert(VtRipClick((WORD)cx, (WORD)cy, noShift) == TRUE);
+    assert(sentCalls == 1 && sentLen == 3 && memcmp(sentBuf, "go\r", 3) == 0);
+
+    vt_put("\033[1!");                                          /* RIP off: not RIP's click */
+    sentLen = 0; sentCalls = 0;
+    assert(VtRipClick((WORD)cx, (WORD)cy, noShift) == FALSE && sentCalls == 0);
+    VtClose();
+}
+
+/* H5: a RIPscrip button's hotkey (1U, here 1T = 'A') sent as a typed character reaches the
+ * reply path with the button's command; any other character sends nothing. */
+static void test_rip_h5_hotkey_reaches_the_reply_path(void)
+{
+    xterm_begin();
+    vt_put("\033[!");
+    assert(vt_rip_active(vtTerm) == 1);
+    vt_put("!|c0F\r\n" "!|1U0K0K28141T00<>Alpha<>alpha^M\r\n");
+    assert(vt_rip_mouse_fields(vtTerm) == 1);                   /* the sentinel: the button is defined */
+    sentLen = 0; sentCalls = 0;
+
+    assert(VtRipKey('x') == FALSE);
+    assert(sentCalls == 0 && sentLen == 0);
+
+    assert(VtRipKey('A') == TRUE);
+    assert(sentCalls == 1 && sentLen == 6 && memcmp(sentBuf, "alpha\r", 6) == 0);
+
+    sentLen = 0; sentCalls = 0;
+    assert(VtRipKey('a') == TRUE);                              /* case-insensitive */
+    assert(sentCalls == 1 && sentLen == 6 && memcmp(sentBuf, "alpha\r", 6) == 0);
+    VtClose();
+}
+
+/* H7: `DCTelnet --replay <file>` feeds the file as host output (ShowText -> VtWrite) and prints
+ * VtCanvasSum() and vtImgRuns. The fixture is vtcon's tests/test_rip.c stroke_fixture(1, 0, 1)
+ * with the stroke option as the default prefs have it (RipFonts: stroke); its sum is vtcon's
+ * stroke_gold[0][0][0]. */
+static void test_rip_h7_replay_checksum_equals_the_vtcon_golden(void)
+{
+    static UBYTE buf[512];
+    FILE *f = fopen("fixtures/rip-bitmap-text.rip", "rb");
+    size_t n, off;
+
+    assert(f);
+    n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    assert(n > 0 && n < sizeof buf);
+
+    xterm_begin();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    vtImgRuns = 0;
+    assert(VtCanvasSum() == 0);                                 /* no canvas before the replay */
+    for (off = 0; off < n; off += 7)                            /* odd pieces: the split never matters */
+        VtWrite(buf + off, (long)(n - off < 7 ? n - off : 7));
+    assert(vt_rip_active(vtTerm) == 1);                         /* detected from the `!|` line alone */
+    assert(vt_rip_commands(vtTerm) > 0);                        /* the sentinel: the parser ran */
+    assert(prefs.RipFonts == RIPFONT_STROKE);
+    assert(VtCanvasSum() == 2193060398UL);                      /* vtcon stroke_gold[0][0][0] */
+    assert(vtImgRuns > 0);                                      /* the canvas was blitted */
+    VtClose();
+}
+
+/* The RIP switch is temporary for the run: in a quick connect (no entry
+ * session) the live prefs are what SavePrefs writes, so what it would save
+ * must still be the pre-RIP screen and renderer while RIP is active. */
+static void test_rip_h4_the_screen_switch_never_reaches_the_prefs_file(void)
+{
+    const ULONG siteMode = 0x29000UL, appMode = 0x11000UL;
+    static struct PrefsStruct toSave;
+
+    xterm_begin();
+    vt_put("\033c\033[2J\r\n");
+    VtRipEnd();
+    prefs.RipMode = RIPMODE_AUTO;
+    VtApplyRip();
+    prefs.DisplayID = appMode; prefs.DisplayWidth = 800; prefs.DisplayHeight = 600; prefs.DisplayDepth = 8;
+    prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_CONSOLE_DEVICE;
+    prefs.RipScreen = RIPSCREEN_MODE;
+    prefs.RipDisplayID = siteMode; prefs.RipWidth = 640; prefs.RipHeight = 480;
+    sessionSettingsId = 0;
+    SitePrefs_HandInit(&handChanges, &prefs);
+    ripReopens = 0;
+
+    vt_put("\033[!");
+    assert(ripReopens == 1 && prefs.DisplayID == siteMode);     /* the sentinel: the switch ran */
+    SitePrefs_ForSave(&toSave, &prefs, &prefs, FALSE);          /* SavePrefs, quick connect */
+    SitePrefs_HandForSave(&handChanges, &toSave);
+    assert(toSave.DisplayID == appMode);
+    assert(toSave.DisplayWidth == 800 && toSave.DisplayHeight == 600 && toSave.DisplayDepth == 8);
+    assert((toSave.State & APP_RENDERER_ALL) == APP_RENDERER_CONSOLE_DEVICE);
+
+    vt_put("\033[1!");                                          /* RIP off: nothing left to take back */
+    assert(prefs.DisplayID == appMode);
+    SitePrefs_ForSave(&toSave, &prefs, &prefs, FALSE);
+    SitePrefs_HandForSave(&handChanges, &toSave);
+    assert(toSave.DisplayID == appMode && memcmp(&toSave, &prefs, sizeof(toSave)) == 0);
+    prefs.RipScreen = RIPSCREEN_DEFAULT;
+    prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_BUILTIN;
+}
+
 int main(void)
 {
     test_the_terminal_starts_below_the_title_bar_and_matches_the_window_rows();
@@ -1661,6 +2128,17 @@ int main(void)
     test_ma4_3_shift_page_up_draws_the_previous_page_and_page_down_returns();
     test_ma4_3_a_scrollback_line_narrower_than_the_grid_is_blank_filled();
     test_ma4_4_the_alt_screen_leaves_the_scrollback_alone();
+    test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answered();
+    test_kg10_the_screens_pixel_aspect_reaches_the_engine();
+    test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque();
+    test_rip_index_0_is_the_palette_colour_not_the_background();
+    test_rip_h3_the_ripscrip_preference_reaches_the_engine();
+    test_rip_fonts_preference_reaches_the_engine();
+    test_rip_h4_the_screen_switch_is_wired_through_the_data_path();
+    test_rip_h5_click_reaches_the_reply_path();
+    test_rip_h5_hotkey_reaches_the_reply_path();
+    test_rip_h7_replay_checksum_equals_the_vtcon_golden();
+    test_rip_h4_the_screen_switch_never_reaches_the_prefs_file();
     printf("term_engine: all assertions passed\n");
     return 0;
 }

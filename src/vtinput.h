@@ -57,4 +57,13 @@ const char *Vt_ScreenTitleFor(ULONG winFlags, ULONG backdropFlag, const char *ti
  * so it cannot hold the end marker. Returns the new length (len when off). */
 size_t Vt_PasteBracket(const vt_term *t, char *buf, size_t len, int utf8);
 
+/* RIPscrip mouse fields (H5, plan D22). A plain left click at pixel px, py from
+ * the text area's top-left: the bytes of the field's command (at least
+ * VT_RIP_OUT_MAX in out), 0 when it is not the RIP's click (RIP off, nothing
+ * hit, or Shift held: Shift keeps selecting). The caller sends them. */
+int Vt_RipClick(vt_term *t, int px, int py, BOOL shift, UBYTE *out);
+
+/* The same for a button's hotkey: key is the character the key made. */
+int Vt_RipKey(vt_term *t, int key, UBYTE *out);
+
 #endif

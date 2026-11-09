@@ -122,7 +122,13 @@ struct PrefsStruct
 
     // Added after the first 2.x files: a shorter file loads with these 0.
     UBYTE TermType;             // TERMTYPE_AUTO (0), _BBS, _UNIX, _PETSCII (below)
-    UBYTE Reserved[3];          // keeps the struct a multiple of 4; a new UBYTE field takes one
+    UBYTE RipMode;             // RIPMODE_AUTO (0), _OFF, _ON (below): RIPscrip graphics
+    UBYTE RipFonts;             // RIPFONT_STROKE (0), _BITMAP (below): how RIPscrip draws its text fonts
+    UBYTE RipScreen;            // RIPSCREEN_DEFAULT (0), _FIT, _MODE (below): the screen a RIP session opens
+    ULONG RipDisplayID;         // RIPSCREEN_MODE: the screen mode (at least 640x350) a RIP session opens
+    UWORD RipWidth;             //   and its size
+    UWORD RipHeight;
+    UBYTE Reserved[4];          // keeps the struct a multiple of 4; a new UBYTE field takes one
 };
 
 /*
@@ -181,6 +187,23 @@ struct PrefsStruct
 #define TERMTYPE_BBS  1  // PC ANSI (BBS art), whatever the Character Set
 #define TERMTYPE_UNIX 2  // xterm, whatever the Character Set
 #define TERMTYPE_PETSCII 3  // a Commodore 64 board: the C64 display and font, PETSCII keys
+
+// RIPscrip (prefs.RipMode). 0 is Auto so a file from before the field loads as Auto.
+// Auto and On both hand the engine vt_set_rip(1); Off hands it 0 (vtbuiltin.c VtApplyRip).
+#define RIPMODE_AUTO 0      // RIP graphics when the host sends ESC[! or a valid !| line
+#define RIPMODE_OFF  1      // every byte is text
+#define RIPMODE_ON   2      // RIP graphics from the start
+// RIPscrip text fonts (prefs.RipFonts). 0 is Stroke so a file from before the field loads as Stroke.
+#define RIPFONT_STROKE 0    // font styles 1-4 drawn as Hershey strokes
+#define RIPFONT_BITMAP 1    // every font drawn with the 8x8 bitmap
+// RIPscrip screen (prefs.RipScreen). 0 is Default so a file from before the field loads as Default.
+#define RIPSCREEN_DEFAULT 0 // the best 1:1 mode the machine has (D5), else scaled to the current screen (D12)
+#define RIPSCREEN_FIT     1 // keep the current screen and scale the canvas to it
+#define RIPSCREEN_MODE    2 // open prefs.RipDisplayID, RipWidth x RipHeight
+#define RIP_MIN_WIDTH     640   // the screen mode requester offers modes of at least this size
+#define RIP_MIN_HEIGHT    350
+// vt_set_rip's mode: 0 off, 1 on (active at once), 2 auto (active on ESC[! or a valid !| line)
+#define Prefs_RipEngineMode(p) ((p)->RipMode == RIPMODE_OFF ? 0 : (p)->RipMode == RIPMODE_ON ? 1 : 2)
 
 // The one predicate for PETSCII (was the State flag APP_OLD_PETSCII_MODE).
 #define Prefs_IsPetscii(p) ((p)->TermType == TERMTYPE_PETSCII)

@@ -110,6 +110,16 @@ static void test_bell_and_ansi_music_follow_prefs(void) {
     assert(!checked(&p, MENU_BELL_FLASH) && checked(&p, MENU_BELL_SOUND) && !checked(&p, MENU_BELL_OFF));
     p.Bell = BELL_OFF;
     assert(!checked(&p, MENU_BELL_FLASH) && !checked(&p, MENU_BELL_SOUND) && checked(&p, MENU_BELL_OFF));
+    p.RipFonts = RIPFONT_STROKE;
+    assert(checked(&p, MENU_RIPFONT_STROKE) && !checked(&p, MENU_RIPFONT_BITMAP));
+    p.RipFonts = RIPFONT_BITMAP;
+    assert(!checked(&p, MENU_RIPFONT_STROKE) && checked(&p, MENU_RIPFONT_BITMAP));
+    p.RipScreen = RIPSCREEN_DEFAULT;
+    assert(!checked(&p, MENU_RIPSCREEN_FIT));
+    p.RipScreen = RIPSCREEN_FIT;
+    assert(checked(&p, MENU_RIPSCREEN_FIT));
+    p.RipScreen = RIPSCREEN_MODE;
+    assert(!checked(&p, MENU_RIPSCREEN_FIT));
     p.AnsiMusic = 0;
     assert(!checked(&p, MENU_ANSI_MUSIC));
     p.AnsiMusic = 1;

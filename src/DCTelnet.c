@@ -34,6 +34,9 @@ static char MainWindowTitle[] =
 #include <proto/exec.h>               // OpenLibrary(), GetMsg(), ReplyMsg(), AllocMem()...
 #include <proto/dos.h>                // Open(), Close(), Read(), Write(), PutStr()...
 #include <proto/intuition.h>          // OpenWindow(),CloseWindow(), OnMenu(), OffMenu()...
+#include <graphics/gfxbase.h>            // ChipRevBits0, DisplayFlags (VtRipDefaultScreen)
+#include <graphics/modeid.h>
+#include <graphics/displayinfo.h>      // DisplayInfo: the screen mode's pixel aspect (vtbuiltin.c)
 #include <graphics/videocontrol.h>    // VTAG_BORDERBLANK_SET
 #include <proto/graphics.h>           // Move(), SetAPen(), Text(), SetFont(), Draw()
 #include <proto/layers.h>             // InstallLayerInfoHook()
@@ -178,6 +181,16 @@ static struct NewMenu mainMenuDesc[] =
     {       NM_SUB, "BBS",                           0 ,       CHECKIT,       ~2L & 15, (APTR)MENU_TERMTYPE_BBS},
     {       NM_SUB, "Unix",                          0 ,       CHECKIT,       ~4L & 15, (APTR)MENU_TERMTYPE_UNIX},
     {       NM_SUB, "PETSCII",                       0 ,       CHECKIT,       ~8L & 15, (APTR)MENU_TERMTYPE_PETSCII},
+    {    NM_ITEM, "RIPscrip",                        0 ,             0,               0, (APTR)MENU_RIP},
+    {       NM_SUB, "Auto",                          0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_RIP_AUTO},
+    {       NM_SUB, "Off",                           0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_RIP_OFF},
+    {       NM_SUB, "On",                            0 ,       CHECKIT,       ~4L & 7, (APTR)MENU_RIP_ON},
+    {    NM_ITEM, "RIPscrip Fonts",                  0 ,             0,               0, (APTR)MENU_RIPFONT},
+    {       NM_SUB, "Stroke",                        0 ,       CHECKIT,       ~1L & 3, (APTR)MENU_RIPFONT_STROKE},
+    {       NM_SUB, "Bitmap",                        0 ,       CHECKIT,       ~2L & 3, (APTR)MENU_RIPFONT_BITMAP},
+    {    NM_ITEM, "RIPscrip Screen Mode",            0 ,             0,               0, (APTR)MENU_RIPSCREEN},
+    {       NM_SUB, "Scale to fit current screen",   0 ,       CHECKIT|MENUTOGGLE,   0, (APTR)MENU_RIPSCREEN_FIT},
+    {       NM_SUB, "Screen Mode...",                0 ,             0,               0, (APTR)MENU_RIPSCREEN_MODE},
     {    NM_ITEM, "Bell",                            0 ,             0,               0, (APTR)MENU_BELL},
     {       NM_SUB, "Flash",                         0 ,       CHECKIT,       ~1L & 7, (APTR)MENU_BELL_FLASH},
     {       NM_SUB, "Sound",                         0 ,       CHECKIT,       ~2L & 7, (APTR)MENU_BELL_SOUND},
@@ -238,6 +251,11 @@ static UBYTE *DisplayBytes(struct Utf8Decoder *d, UBYTE *data, long *len);
 static UBYTE *ScrollbackBytes(UBYTE *data, long *len);
 static UBYTE *SoundFilter(UBYTE *text, long *len, long *used, BOOL *stopped);
 static void ShowText(UBYTE *text, long len);
+static char replayPath[256];    // DCTelnet --replay <file> (below ShowText)
+static BOOL replayPending;
+static ULONG replayTicks;       // DateStamp ticks (1/50 s) the feed took, emulated speed on a rig
+static BOOL ReplayFeed(void);
+static void ReplayReport(void);
 static void MusicHoldPoll(void);
 static void MusicHoldDrop(void);
 static BOOL musicHold;                   // text held back by a foreground tune (see ShowText)
@@ -412,6 +430,8 @@ BYTE dontUseSig31 = -1; // don't use it, ibmcon.device will destroy it.
 // A selection drag is under way (SelectionDown..SelectionUp): the built-in
 // renderer's TerminalMouseReport() reads it.
 static BOOL  selDragging;
+static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h);     // below RequestDisplayReopen
+static void VtRipScreenChanged(const struct PrefsStruct *before);
 #include "vtbuiltin.c"
 
 static void ObtainWorkbenchPens(void);
@@ -1050,6 +1070,31 @@ static void RequestDisplayReopen(const struct PrefsStruct *before)
     }
 }
 
+/* RIPscrip went active or inactive (vtbuiltin.c VtRipWatch): prefs already hold
+ * the screen mode and renderer to show, so the ordinary display reopen does the
+ * work, the same as a mode or renderer change from the menus. */
+static void VtRipScreenChanged(const struct PrefsStruct *before)
+{
+    RequestDisplayReopen(before);
+}
+
+/* The default RIPscrip screen (D5, D12) when the site names none: a 1:1 mode of at
+ * least 640x350, NTSC interlace on OCS/ECS, Multiscan on AGA when a 31 kHz mode
+ * is there; returns FALSE with *id/*w/*h set. TRUE: none fits (PAL without
+ * 31 kHz), so the canvas is scaled to the current 640x256 screen. */
+static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h)
+{
+    if ((GfxBase->ChipRevBits0 & GFXF_AA_ALICE) && !ModeNotAvailable(VGAPRODUCT_KEY))
+    {
+        *id = VGAPRODUCT_KEY; *w = 640; *h = 480;
+        return FALSE;
+    }
+    if (GfxBase->DisplayFlags & PAL)
+        return TRUE;
+    *id = NTSC_MONITOR_ID | HIRESLACE_KEY; *w = 640; *h = 400;
+    return FALSE;
+}
+
 /**
  * @brief Bring the live menu's check marks up to date with `prefs`.
  *
@@ -1130,6 +1175,7 @@ BOOL BeginEntrySession(ULONG settingsId, const struct SiteSettings *entry)
         ReloadXemOptions();
         RequestDisplayReopen(&before);
         VtApplyPersonality();            // the Terminal Type of the site or the settings
+        VtApplyRip();
     }
     SyncPetsciiDisplay();
     handBaseline = prefs;
@@ -1196,6 +1242,8 @@ void EndEntrySession(void)
 {
     static struct PrefsStruct before;
 
+    VtRipEnd();                     // a RIP screen is undone before the site's settings are
+
     if (fKeysFromEntry)
     {
         SitePrefs_SwapOutKeys(fKeys, globalFKeys);
@@ -1215,6 +1263,7 @@ void EndEntrySession(void)
             ReloadXemOptions();
         RequestDisplayReopen(&before);
         VtApplyPersonality();            // the Terminal Type of the site or the settings
+        VtApplyRip();
     }
     SyncPetsciiDisplay();
     handBaseline = prefs;
@@ -1538,7 +1587,7 @@ BOOL ScreenModeInto(struct PrefsStruct *target)
     {
         result = ScreenModeRequester(win, &target->DisplayID,
                                     &target->DisplayWidth, &target->DisplayHeight, &target->DisplayDepth,
-                                    32);
+                                    32, 640, 0);
     }
     else    // fallback to legacy ReqTools library
     {
@@ -1574,6 +1623,28 @@ BOOL ScreenModeInto(struct PrefsStruct *target)
 
 // The screen mode requester for the live settings (exported: LoadPrefs asks
 // for a mode on first run).
+/**
+ * @brief The RIPscrip screen mode requester (Terminal > RIPscrip Screen Mode, and
+ *        the site settings): the same ASL requester as ScreenModeInto, offering
+ *        only modes of at least RIP_MIN_WIDTH x RIP_MIN_HEIGHT. TRUE when chosen;
+ *        RipScreen is then RIPSCREEN_MODE.
+ */
+BOOL RipScreenModeInto(struct PrefsStruct *target)
+{
+    ULONG id = target->RipDisplayID ? target->RipDisplayID : (ULONG)(NTSC_MONITOR_ID | HIRESLACE_KEY);
+    UWORD w = target->RipWidth >= RIP_MIN_WIDTH ? target->RipWidth : RIP_MIN_WIDTH;
+    UWORD h = target->RipHeight >= RIP_MIN_HEIGHT ? target->RipHeight : RIP_MIN_HEIGHT;
+    UWORD depth = 4;
+
+    if (!ScreenModeRequester(win, &id, &w, &h, &depth, 4, RIP_MIN_WIDTH, RIP_MIN_HEIGHT))
+        return FALSE;
+    target->RipDisplayID = id;
+    target->RipWidth = w;
+    target->RipHeight = h;
+    target->RipScreen = RIPSCREEN_MODE;
+    return TRUE;
+}
+
 BOOL ChooseScreen(void)
 {
     // On first time init, returning FALSE prevents the preferences from being written to disk.
@@ -2840,15 +2911,29 @@ int main(int argc, char *argv[])
                 "compiled with: " STR(COMPILER_STRING) "\n"
                 "\n"
                 "Usage: DCTelnet <host> [<port>]\n"
+                "       DCTelnet --replay <file>   (show a file as host output, print the canvas checksum)\n"
             );
 
             returnCode = RETURN_OK;
             goto clean_exit;
         }
 
-        strlcpy(server, argv[1], sizeof(server));
+        if(stricmp(argv[1], "--replay") == 0)
+        {
+            if(argc < 3)
+            {
+                PutStr("Usage: DCTelnet --replay <file>\n");
+                returnCode = RETURN_FAIL;
+                goto clean_exit;
+            }
+            strlcpy(replayPath, argv[2], sizeof(replayPath));
+        }
+        else
+        {
+            strlcpy(server, argv[1], sizeof(server));
 
-        if(argc > 2) tcpPort = atoi(argv[2]);
+            if(argc > 2) tcpPort = atoi(argv[2]);
+        }
 
         //if(argc > 3) if(stricmp(argv[3], "debug")==0) debug = TRUE;
     }
@@ -2961,6 +3046,9 @@ int main(int argc, char *argv[])
     // We retry opening the bsdsocket.library later as user might load a TCP/IP stack later.
 
 
+    if (replayPath[0])      // the engine, and so the RIP canvas, lives in the built-in renderer
+        prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_BUILTIN;
+
     if (! OpenDisplay())
         goto clean_exit;
 
@@ -2972,6 +3060,9 @@ int main(int argc, char *argv[])
 
     shouldRestart = FALSE;
     shouldReopenScreen = FALSE;
+
+    if (replayPath[0] && !ReplayFeed())
+        goto clean_exit;
 
     // Connect to server if it was specified in the command line. It needs an opened display,
     // and with Terminal Type PETSCII the C64 one: the main loop reopens it, then connects.
@@ -3149,7 +3240,7 @@ int main(int argc, char *argv[])
 
                 // A display reopen or a connect already queued (an entry's
                 // settings, Terminal Type) runs now, not after the next event.
-                if (shouldRestart || shouldReopenConsole || pendingConnect.active)
+                if (shouldRestart || shouldReopenConsole || pendingConnect.active || replayPending)
                     sigmask = SetSignal(0L, sig | winsig | SIGBREAKF_CTRL_C)
                             & (sig | winsig | SIGBREAKF_CTRL_C);
                 else
@@ -3207,6 +3298,13 @@ int main(int argc, char *argv[])
             // After the reopen, so the connect sees the entry's display settings.
             if (pendingConnect.active)
                 RunPendingConnect();
+
+            // --replay: the RIP screen switch (if any) has settled, so the canvas is what it shows.
+            if (replayPending && !shouldRestart && !shouldReopenConsole)
+            {
+                ReplayReport();
+                shouldQuitApp = TRUE;
+            }
         }
     } /* -- end of main loop -- */
 
@@ -3375,6 +3473,70 @@ static BOOL  musicHoldRoom;             // held for queue room, not for the tune
 
 // The text to the screen and the scrollback; a foreground tune in it holds
 // back what follows (while there is sound to wait for).
+/* DCTelnet --replay <file> (RIPscrip plan H7): the file goes through ShowText() as host output
+ * in connection-sized pieces, then the main loop settles any display reopen the RIP switch
+ * asked for and ReplayReport() prints the canvas checksum (vtcon's canvas_sum) and the blit
+ * sentinel, then the program ends. */
+static BOOL ReplayFeed(void)
+{
+    BPTR fh = Open((STRPTR)replayPath, MODE_OLDFILE);
+    UBYTE chunk[1024];
+    struct DateStamp t0, t1;
+    LONG n;
+
+    if (!fh)
+    {
+        Printf("replay: cannot open %s\n", (LONG)replayPath);
+        return FALSE;
+    }
+    DateStamp(&t0);
+    while ((n = Read(fh, chunk, sizeof(chunk))) > 0)
+        ShowText(chunk, n);
+    DateStamp(&t1);
+    Close(fh);
+    replayTicks = (ULONG)((t1.ds_Minute - t0.ds_Minute) * 3000L + (t1.ds_Tick - t0.ds_Tick));
+    replayPending = TRUE;
+    return TRUE;
+}
+
+/* Plan H2b: the cost of one forced full-canvas redraw (every cell dirty) through the real
+ * VtDraw -> VtDrawImages -> VtImgWrite path, averaged over REPLAY_REDRAWS, in microseconds
+ * (E-clock). 0 when the timer is not open or no picture is shown. */
+#define REPLAY_REDRAWS 10
+static ULONG ReplayRedrawUs(void)
+{
+    struct EClockVal a, b;
+    ULONG perSecond = 0, runs0 = vtImgRuns;
+    UBYTE i;
+
+    if (!tickOpen || !vtTerm || !vt_images(vtTerm))
+        return 0;
+    perSecond = ReadEClock(&a);
+    for (i = 0; i < REPLAY_REDRAWS; i++)
+        VtDraw(NULL, 0, 0, term_cols, term_rows);
+    ReadEClock(&b);
+    if (vtImgRuns == runs0 || !perSecond)
+        return 0;                       /* nothing was blitted: no number */
+    {
+        /* 64-bit-free: elapsed E-clock counts, hi words differ by at most a few */
+        ULONG lo = b.ev_lo - a.ev_lo, hi = b.ev_hi - a.ev_hi - (b.ev_lo < a.ev_lo);
+
+        if (hi)
+            return 0xFFFFFFFFUL;
+        /* us = counts / N * 1000 / (perSecond / 1000); exact to 0.1 percent, no overflow below 4 s */
+        return ((lo / REPLAY_REDRAWS) * 1000UL) / (perSecond / 1000UL);
+    }
+}
+
+static void ReplayReport(void)
+{
+    ULONG redrawUs = ReplayRedrawUs();
+
+    Printf("replay: canvas=%lu blits=%lu feed_ticks=%lu\n", VtCanvasSum(), vtImgRuns, replayTicks);
+    Printf("replay: redraw_us=%lu redraw_n=%lu\n", redrawUs, (ULONG)REPLAY_REDRAWS);
+    replayPending = FALSE;
+}
+
 static void ShowText(UBYTE *text, long len)
 {
     for (;;)
@@ -4237,8 +4399,12 @@ static void GetWindowMsg(struct Window *wwin)
             {
                 int mbutton = MouseButtonOf(code);
 
+                // H5: a RIPscrip mouse field answers first, as before any report or selection; it sent its command.
+                if (code == SELECTDOWN && VtRipClick(mouseX, mouseY, qual))
+                {
+                }
                 // MA3-4/5: a program that asked for the mouse gets it (Shift keeps selecting)
-                if (mbutton >= 0 && VtMouseOwned((qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0))
+                else if (mbutton >= 0 && VtMouseOwned((qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0))
                 {
                     UWORD row, col;
 
@@ -4439,7 +4605,10 @@ static void GetWindowMsg(struct Window *wwin)
 
                             i += Keys_Next((UBYTE *)conbuf + i, length - i, &id, &ch);
                             if (id == KEY_TEXT)
-                                SendTypedChar(ch);
+                            {
+                                if (!VtRipKey(ch))      // H5: a RIPscrip button's hotkey sends its command
+                                    SendTypedChar(ch);
+                            }
                             else
                                 SendKey(id);
                         }
@@ -4738,6 +4907,30 @@ static void GetWindowMsg(struct Window *wwin)
                         SyncPetsciiDisplay();
                         break;
 
+                    case MENU_RIP_AUTO:
+                    case MENU_RIP_OFF:
+                    case MENU_RIP_ON:
+                        prefs.RipMode = (UBYTE)((ULONG)GTMENUITEM_USERDATA(item) - MENU_RIP_AUTO);
+                        VtApplyRip();
+                        break;
+
+                    case MENU_RIPSCREEN_FIT:
+                        // (toggle: checking it picks the scaled view, unchecking goes back to the default)
+                        prefs.RipScreen = (prefs.RipScreen == RIPSCREEN_FIT) ? RIPSCREEN_DEFAULT : RIPSCREEN_FIT;
+                        SyncMenuChecks();
+                        break;
+
+                    case MENU_RIPSCREEN_MODE:
+                        if (RipScreenModeInto(&prefs))
+                            SyncMenuChecks();
+                        break;
+
+                    case MENU_RIPFONT_STROKE:
+                    case MENU_RIPFONT_BITMAP:
+                        prefs.RipFonts = (UBYTE)((ULONG)GTMENUITEM_USERDATA(item) - MENU_RIPFONT_STROKE);
+                        VtApplyRip();
+                        break;
+
                     case MENU_COPY:
                         if (selShown)
                             CopyRange(&selShownRange);
@@ -4912,6 +5105,7 @@ static void GetWindowMsg(struct Window *wwin)
                         {
                             RequestDisplayReopen(&before);
                             VtApplyPersonality();            // the Terminal Type of the site or the settings
+                            VtApplyRip();
                         }
                         break;
                     }

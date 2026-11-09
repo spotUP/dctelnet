@@ -1071,7 +1071,7 @@ clean_and_return:
  */
 BOOL ScreenModeRequester(struct Window *parent, ULONG* displayID,
                          UWORD* displayWidth, UWORD* displayHeight, UWORD* displayDepth,
-                         UWORD maxDepth)
+                         UWORD maxDepth, UWORD minWidth, UWORD minHeight)
 {
     struct ScreenModeRequester *sr = NULL;
     BOOL  result = FALSE;
@@ -1108,7 +1108,8 @@ BOOL ScreenModeRequester(struct Window *parent, ULONG* displayID,
                         ASLSM_DoWidth,        TRUE,
                         ASLSM_DoHeight,       TRUE,
                         ASLSM_DoDepth,        TRUE,
-                        ASLSM_MinWidth,       640,
+                        ASLSM_MinWidth,       minWidth,
+                        ASLSM_MinHeight,      minHeight,
                         ASLSM_MaxDepth,       maxDepth,
 
                         TAG_DONE);
