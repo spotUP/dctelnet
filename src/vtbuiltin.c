@@ -26,6 +26,7 @@
 #include "vtpens.h"
 #include "vtinput.h"
 #include "glyphraster.h"
+#include "vtdownload.h"
 #include "site_prefs.h"
 #include "screenfont.h"
 
@@ -596,6 +597,17 @@ static void VtRipEnd(void)
     }
 }
 
+/* The host of the running connection: inline=0 files land in Download Path/<host>/.
+ * Kept here so a reopened display (VtOpen) gets it back; "" is "local". */
+static char vtDlHost[52];
+
+static void VtSetDownloadHost(const char *host)
+{
+    strlcpy(vtDlHost, host ? host : "", sizeof(vtDlHost));
+    if (vtTerm)
+        vt_set_download_sink(vtTerm, VtDownload_Sink, vtDlHost);
+}
+
 static void VtSniffReset(void)
 {
     Vt_Utf8SnifferReset(&vtSniff);
@@ -820,7 +832,8 @@ static void VtSetAspect(void)
 static int VtOpen(void)
 {
     static const vt_callbacks cb = { VtDraw, VtScroll, VtReply, NULL, VtTitle, NULL, NULL,
-                                     NULL, NULL, NULL, NULL, NULL };  /* clipboard, cwd, notify, music: not used */
+                                     NULL, NULL, NULL, NULL, NULL,
+                                     NULL };  /* clipboard, cwd, notify, music, RIP level-9 blocks: not used */
 
     vtScrollOff = 0;
     term_cell_source = VtCursorCell;
@@ -855,6 +868,7 @@ static int VtOpen(void)
     VtSetAspect();
     VtApplyPersonality();
     VtApplyRip();
+    vt_set_download_sink(vtTerm, VtDownload_Sink, vtDlHost);   /* inline=0 files: Download Path/<host>/<name> */
     Vt_MouseReset(&vtMouse);
     vtTitleSeen[0] = vtTitleShown[0] = 0;
     TerminalMouseReport();
