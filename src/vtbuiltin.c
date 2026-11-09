@@ -703,6 +703,43 @@ static void VtMouseMove(int x, int y, int mods)
         VtReply(NULL, out, n);
 }
 
+/* RIPscrip mouse fields (H5, D22): a plain left click in window coordinates
+ * mx, my. TRUE when a field answered; its command went to the BBS through
+ * VtReply, the path the engine's own replies take, and the click is consumed.
+ * The pointer is in the window's own coordinates; the picture is drawn 1:1 at
+ * TERM_PX(0), TERM_PY(0) in the RastPort's (GimmeZeroZero: inside the border). */
+static BOOL VtRipClick(WORD mx, WORD my, UWORD qual)
+{
+    UBYTE out[VT_RIP_OUT_MAX];
+    int n, bx = 0, by = 0;
+
+    if (!vtTerm || !win)
+        return FALSE;
+    if (win->Flags & WFLG_GIMMEZEROZERO) {
+        bx = win->BorderLeft;
+        by = win->BorderTop;
+    }
+    n = Vt_RipClick(vtTerm, mx - bx - TERM_PX(0), my - by - TERM_PY(0),
+                    (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0, out);
+    if (n > 0)
+        VtReply(NULL, out, n);
+    return n > 0;
+}
+
+/* A typed character c: a RIP button's hotkey sends its command instead. */
+static BOOL VtRipKey(UBYTE c)
+{
+    UBYTE out[VT_RIP_OUT_MAX];
+    int n;
+
+    if (!vtTerm)
+        return FALSE;
+    n = Vt_RipKey(vtTerm, c, out);
+    if (n > 0)
+        VtReply(NULL, out, n);
+    return n > 0;
+}
+
 static void VtClose(void);
 static void VtReleasePens(void);
 

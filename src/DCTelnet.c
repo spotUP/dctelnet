@@ -4286,8 +4286,12 @@ static void GetWindowMsg(struct Window *wwin)
             {
                 int mbutton = MouseButtonOf(code);
 
+                // H5: a RIPscrip mouse field answers first, as before any report or selection; it sent its command.
+                if (code == SELECTDOWN && VtRipClick(mouseX, mouseY, qual))
+                {
+                }
                 // MA3-4/5: a program that asked for the mouse gets it (Shift keeps selecting)
-                if (mbutton >= 0 && VtMouseOwned((qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0))
+                else if (mbutton >= 0 && VtMouseOwned((qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0))
                 {
                     UWORD row, col;
 
@@ -4488,7 +4492,10 @@ static void GetWindowMsg(struct Window *wwin)
 
                             i += Keys_Next((UBYTE *)conbuf + i, length - i, &id, &ch);
                             if (id == KEY_TEXT)
-                                SendTypedChar(ch);
+                            {
+                                if (!VtRipKey(ch))      // H5: a RIPscrip button's hotkey sends its command
+                                    SendTypedChar(ch);
+                            }
                             else
                                 SendKey(id);
                         }

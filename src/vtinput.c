@@ -127,3 +127,17 @@ size_t Vt_PasteBracket(const vt_term *t, char *buf, size_t len, int utf8)
     memcpy(buf + np + n, post, (size_t)nq);
     return (size_t)np + n + (size_t)nq;
 }
+
+int Vt_RipClick(vt_term *t, int px, int py, BOOL shift, UBYTE *out)
+{
+    if (!t || shift)
+        return 0;
+    return vt_rip_click(t, px, py, (vt_u8 *)out);
+}
+
+int Vt_RipKey(vt_term *t, int key, UBYTE *out)
+{
+    if (!t)
+        return 0;
+    return vt_rip_key(t, key, (vt_u8 *)out);
+}

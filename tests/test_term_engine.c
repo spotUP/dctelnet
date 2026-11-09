@@ -198,6 +198,9 @@ static struct Window window, *win = &window;
 #define IDCMP_RAWKEY 0x400UL
 static char MainWindowTitle[] = "DCTelnet own title";
 #define WFLG_BACKDROP 0x100UL
+#define WFLG_GIMMEZEROZERO 0x400000UL
+#define IEQUALIFIER_LSHIFT 0x0001
+#define IEQUALIFIER_RSHIFT 0x0002
 static char titleSet[256];
 static const UBYTE *screenTitleSet;     /* (UBYTE *)-1 when the screen title stays */
 static int titleCalls;
@@ -1954,6 +1957,35 @@ static void test_rip_h4_the_screen_switch_is_wired_through_the_data_path(void)
     prefs.State = (prefs.State & ~APP_RENDERER_ALL) | APP_RENDERER_BUILTIN;
 }
 
+/* H5 (D22): a plain left click on a RIPscrip mouse field sends the field's command through
+ * the reply path (send_data) and is consumed; Shift or a click outside sends nothing, and
+ * a button's hotkey sends the same bytes. */
+static void test_rip_h5_click_reaches_the_reply_path(void)
+{
+    const int cx = TERM_PX(0) + 15, cy = TERM_PY(0) + 15;   /* inside the field 10,10 - 40,40 (base 36: 14 is 40) */
+    UWORD noShift = 0, shift = IEQUALIFIER_LSHIFT;
+
+    xterm_begin();
+    window.Flags = 0;
+    vt_put("\033[!");
+    assert(vt_rip_active(vtTerm) == 1);
+    vt_put("!|c0F\r\n" "!|L00000A0A\r\n" "!|1M000A0A1414" "1000000go^M\r\n");
+    assert(vt_rip_mouse_fields(vtTerm) == 1);                   /* the sentinel: the field is defined */
+    sentLen = 0; sentCalls = 0;
+
+    assert(VtRipClick((WORD)cx, (WORD)cy, shift) == FALSE);     /* Shift keeps selecting */
+    assert(VtRipClick((WORD)(TERM_PX(0) + 300), (WORD)(TERM_PY(0) + 300), noShift) == FALSE);
+    assert(sentCalls == 0 && sentLen == 0);
+
+    assert(VtRipClick((WORD)cx, (WORD)cy, noShift) == TRUE);
+    assert(sentCalls == 1 && sentLen == 3 && memcmp(sentBuf, "go\r", 3) == 0);
+
+    vt_put("\033[1!");                                          /* RIP off: not RIP's click */
+    sentLen = 0; sentCalls = 0;
+    assert(VtRipClick((WORD)cx, (WORD)cy, noShift) == FALSE && sentCalls == 0);
+    VtClose();
+}
+
 /* The RIP switch is temporary for the run: in a quick connect (no entry
  * session) the live prefs are what SavePrefs writes, so what it would save
  * must still be the pre-RIP screen and renderer while RIP is active. */
@@ -2050,6 +2082,7 @@ int main(void)
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
     test_rip_fonts_preference_reaches_the_engine();
     test_rip_h4_the_screen_switch_is_wired_through_the_data_path();
+    test_rip_h5_click_reaches_the_reply_path();
     test_rip_h4_the_screen_switch_never_reaches_the_prefs_file();
     printf("term_engine: all assertions passed\n");
     return 0;
