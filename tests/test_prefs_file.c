@@ -18,6 +18,20 @@ static size_t v2_file(const struct PrefsStruct *p, UWORD dataSize)
     return sizeof(hdr) + dataSize;
 }
 
+/* H4: the RIPscrip screen fields survive the file; a file from before them loads Default. */
+static void test_the_rip_screen_fields_round_trip_and_older_files_load_default(void)
+{
+    struct PrefsStruct p, got;
+    UWORD older = (UWORD)offsetof(struct PrefsStruct, RipScreen);
+    memset(&p, 0, sizeof(p));
+    p.RipScreen = RIPSCREEN_MODE; p.RipDisplayID = 0x29000UL; p.RipWidth = 640; p.RipHeight = 480;
+    assert(Prefs_Decode(file, v2_file(&p, sizeof(p)), &got) == PREFS_FILE_V2);
+    assert(got.RipScreen == RIPSCREEN_MODE && got.RipDisplayID == 0x29000UL);
+    assert(got.RipWidth == 640 && got.RipHeight == 480);
+    assert(Prefs_Decode(file, v2_file(&p, older), &got) == PREFS_FILE_V2);
+    assert(got.RipScreen == RIPSCREEN_DEFAULT && got.RipDisplayID == 0 && got.RipWidth == 0);
+}
+
 static void test_a_v2_file_round_trips(void)
 {
     struct PrefsStruct p, got;
@@ -259,6 +273,7 @@ static void test_the_old_petscii_flag_becomes_the_petscii_terminal_type(void)
 int main(void)
 {
     test_a_v2_file_round_trips();
+    test_the_rip_screen_fields_round_trip_and_older_files_load_default();
     test_an_older_v2_file_loads_with_the_new_fields_zero();
     test_terminal_type_is_saved_and_an_older_file_loads_automatic();
     test_a_newer_v2_file_loads_the_fields_it_knows();

@@ -124,7 +124,11 @@ struct PrefsStruct
     UBYTE TermType;             // TERMTYPE_AUTO (0), _BBS, _UNIX, _PETSCII (below)
     UBYTE RipMode;             // RIPMODE_AUTO (0), _OFF, _ON (below): RIPscrip graphics
     UBYTE RipFonts;             // RIPFONT_STROKE (0), _BITMAP (below): how RIPscrip draws its text fonts
-    UBYTE Reserved[1];          // keeps the struct a multiple of 4; a new UBYTE field takes one
+    UBYTE RipScreen;            // RIPSCREEN_DEFAULT (0), _FIT, _MODE (below): the screen a RIP session opens
+    ULONG RipDisplayID;         // RIPSCREEN_MODE: the screen mode (at least 640x350) a RIP session opens
+    UWORD RipWidth;             //   and its size
+    UWORD RipHeight;
+    UBYTE Reserved[4];          // keeps the struct a multiple of 4; a new UBYTE field takes one
 };
 
 /*
@@ -192,6 +196,12 @@ struct PrefsStruct
 // RIPscrip text fonts (prefs.RipFonts). 0 is Stroke so a file from before the field loads as Stroke.
 #define RIPFONT_STROKE 0    // font styles 1-4 drawn as Hershey strokes
 #define RIPFONT_BITMAP 1    // every font drawn with the 8x8 bitmap
+// RIPscrip screen (prefs.RipScreen). 0 is Default so a file from before the field loads as Default.
+#define RIPSCREEN_DEFAULT 0 // the best 1:1 mode the machine has (D5), else scaled to the current screen (D12)
+#define RIPSCREEN_FIT     1 // keep the current screen and scale the canvas to it
+#define RIPSCREEN_MODE    2 // open prefs.RipDisplayID, RipWidth x RipHeight
+#define RIP_MIN_WIDTH     640   // the screen mode requester offers modes of at least this size
+#define RIP_MIN_HEIGHT    350
 // vt_set_rip's mode: 0 off, 1 on (active at once), 2 auto (active on ESC[! or a valid !| line)
 #define Prefs_RipEngineMode(p) ((p)->RipMode == RIPMODE_OFF ? 0 : (p)->RipMode == RIPMODE_ON ? 1 : 2)
 
