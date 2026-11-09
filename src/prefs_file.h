@@ -87,4 +87,14 @@ ULONG Prefs_FirstRunState(ULONG rendererBits);
  */
 void Prefs_ApplyFirstRun(struct PrefsStruct *p, ULONG rendererBits);
 
+/*
+ * The first-run screen mode. p already holds the default mode (what the
+ * requester shows preselected). ask() is the screen mode requester writing
+ * into p: TRUE when the user chose a mode. When it returns FALSE (Cancel,
+ * the window closed, ASL failed) p keeps the default and startup carries on;
+ * the mode is changed later in Settings. Returns FALSE only when p holds no
+ * mode the start can use.
+ */
+BOOL Prefs_FirstRunScreen(struct PrefsStruct *p, BOOL (*ask)(void));
+
 #endif /* PREFS_FILE_H */

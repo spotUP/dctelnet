@@ -270,6 +270,41 @@ static void test_the_old_petscii_flag_becomes_the_petscii_terminal_type(void)
     assert(!Prefs_IsPetscii(&got));
 }
 
+/* First run, screen mode requester cancelled (or ASL failed): DCTelnet quit
+ * with no screen and no message. It keeps the preselected default and starts. */
+static int asks;
+static struct PrefsStruct *asked;
+static BOOL ask_cancelled(void)
+{
+    asks++;
+    asked->DisplayWidth = 1;        /* a requester that wrote before failing */
+    return FALSE;
+}
+static BOOL ask_chooses(void)
+{
+    asked->DisplayID = 0x00011000; asked->DisplayWidth = 800; asked->DisplayHeight = 600;
+    asked->DisplayDepth = 8;
+    return TRUE;
+}
+
+static void test_a_cancelled_first_run_screen_requester_starts_with_the_default_mode(void)
+{
+    struct PrefsStruct p;
+
+    memset(&p, 0, sizeof(p));
+    Prefs_ApplyFirstRun(&p, APP_RENDERER_BUILTIN);
+    p.DisplayID = 0x00029000; p.DisplayWidth = 640; p.DisplayHeight = 256; p.DisplayDepth = 4;
+    asks = 0;
+    asked = &p;
+    assert(Prefs_FirstRunScreen(&p, ask_cancelled));        /* startup continues */
+    assert(asks == 1);                                      /* the requester ran */
+    assert(p.DisplayID == 0x00029000 && p.DisplayWidth == 640
+        && p.DisplayHeight == 256 && p.DisplayDepth == 4);
+
+    assert(Prefs_FirstRunScreen(&p, ask_chooses));          /* a chosen mode is kept */
+    assert(p.DisplayID == 0x00011000 && p.DisplayWidth == 800 && p.DisplayDepth == 8);
+}
+
 int main(void)
 {
     test_a_v2_file_round_trips();
@@ -288,6 +323,7 @@ int main(void)
     test_a_first_run_has_scrollback_history_on();
     test_a_first_run_has_ansi_music_on();
     test_the_old_petscii_flag_becomes_the_petscii_terminal_type();
+    test_a_cancelled_first_run_screen_requester_starts_with_the_default_mode();
     printf("prefs_file: all assertions passed\n");
     return 0;
 }

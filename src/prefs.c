@@ -238,8 +238,13 @@ BOOL LoadPrefs(void)
         prefs.DisplayHeight = DISP_DEFAULT_HEIGHT;
         prefs.DisplayDepth  = DISP_DEFAULT_DEPTH;
 
-        if (! ChooseScreen())
+        // Cancel (or a failed requester) keeps the default above and starts:
+        // quitting here left no screen and no message. Settings changes it.
+        if (! Prefs_FirstRunScreen(&prefs, ChooseScreen))
+        {
+            SimpleReq("No usable screen mode is set.");
             goto clean_and_fail;
+        }
     }
 
 
