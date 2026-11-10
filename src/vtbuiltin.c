@@ -24,6 +24,8 @@
 #include "glyphmap.h"
 #include "vtpersonality.h"
 #include "vtpens.h"
+#include "pen_rule.h"
+#include "pic_pens.h"
 #include "vtinput.h"
 #include "glyphraster.h"
 #include "vtdownload.h"
@@ -53,15 +55,31 @@ static int VtScrollbackCap(void)
     return prefs.nScrollbackLines > 32767UL ? 32767 : (int)prefs.nScrollbackLines;
 }
 
-/* MA2-9: on a screen whose bitmap is deeper than 8 bits (RTG true or high
- * colour) a 256-colour or RGB cell gets a pen of its own colour from
- * ObtainBestPen(), cached per RGB in slots 16-255 of the engine's pen map.
- * Every other screen, the default colours and c < 16 keep Vt_PenFor() and
- * never call it (the 68000 path). */
+/* MA2-9: on a screen with more than 4 planes (32 to 256 colour palette
+ * screens, RTG true or high colour; not HAM, not Extra Half-Brite, graphics
+ * V39 or later: Vt_ObtainsPens()) a 256-colour or RGB cell
+ * gets a pen of its own colour from ObtainBestPen(), cached per RGB in slots
+ * 16-255 of the engine's pen map. The rule is vtcon's pen_rule.h, the one
+ * UP-Term uses for its palette screens: an exact entry while the colour map
+ * has a free one, else the nearest pen it has. Every other screen, the
+ * default colours and c < 16 keep Vt_PenFor() and never call it (the 68000
+ * path). */
 #define VT_TC_MAX 240
 static struct { ULONG rgb; LONG pen; } vtTc[VT_TC_MAX];
 static int vtTcN, vtTcLast;
 static BOOL vtTrueColour;
+
+/* pen_rule.h's best(): the screen's ObtainBestPen, exact (OBP_FailIfBad) or
+ * the nearest pen. Same call as vtcon's render/pens_amiga.c vr_pen_best. */
+static long VtPenBest(void *u, unsigned long rgb, int exact)
+{
+    return (long)ObtainBestPen(scr->ViewPort.ColorMap,
+                               ((rgb >> 16) & 0xFF) * 0x01010101UL,
+                               ((rgb >> 8) & 0xFF) * 0x01010101UL,
+                               (rgb & 0xFF) * 0x01010101UL,
+                               OBP_Precision, exact ? PRECISION_EXACT : PRECISION_IMAGE,
+                               OBP_FailIfBad, exact ? TRUE : FALSE, TAG_END);
+}
 
 /* The pen to draw colour c with. */
 static UBYTE VtPenFor(vt_color c)
@@ -83,11 +101,7 @@ static UBYTE VtPenFor(vt_color c)
     }
     if (vtTcN >= VT_TC_MAX)
         return Vt_PenFor(c, prefs.AnsiColors);
-    pen = ObtainBestPen(scr->ViewPort.ColorMap,
-                        ((rgb >> 16) & 0xFF) * 0x01010101UL,
-                        ((rgb >> 8) & 0xFF) * 0x01010101UL,
-                        (rgb & 0xFF) * 0x01010101UL,
-                        OBP_Precision, PRECISION_EXACT, OBP_FailIfBad, TRUE, TAG_END);
+    pen = vr_obtain_rule(VtPenBest, NULL, rgb);
     if (pen < 0)
         return Vt_PenFor(c, prefs.AnsiColors);
     vtTc[vtTcN].rgb = rgb;
@@ -103,7 +117,7 @@ static UBYTE VtPenFor(vt_color c)
  * render/amiga_render.c (draw_images, img_run, img_cell, img_write_idx,
  * img_write_idx_keep, under_text) onto retro32-term's coordinates and
  * DCTelnet's pens: a picture colour gets the pen VtPenFor gives the same
- * RGB text colour (an obtained pen above 8 bits, else the nearest of the
+ * RGB text colour (an obtained pen on a screen over 4 planes, else the nearest of the
  * sixteen ANSI pens). */
 #define VT_IMG_W 1280                   /* the widest run, in pixels */
 static UBYTE vtImgBuf[8 * VT_IMG_W];    /* one cell row of a run: 8 pixels high */
@@ -162,6 +176,205 @@ static struct RastPort *VtImgRp(void)
     return term_rp ? term_rp : term_win_rp;
 }
 
+/* Kitty pictures on a palette screen of 5 to 7 planes (32 to 128 colours). DCTelnet keeps pens 0-19 for itself
+ * (PEN_EXCLUSIVE), so a 5-plane screen has 12 free pens: a picture's palette (up to 256 colours, kit_quant) cannot
+ * be given pens first-come, or it shows the colours of its top rows only. Like vtcon's render/amiga_render.c
+ * (pic_make, pic_slot, pic_sweep, img_write_idx) the picture instead keeps its own RGB (vt_set_image_rgb_copy),
+ * the shared picker (render/pic_pens.h pp_hist, pp_pick) gives the free pens to the colours covering most of it,
+ * and every pixel is dithered from its own colour onto {the 16 ANSI pens + those pens}. These pens live in a set of
+ * their own (VtPic slots), not in vtTc, and go back when their picture does (replaced, deleted, VtReleasePens). */
+#define VT_PIC_SLOTS 4
+struct VtPic {
+    long serial;                        /* the picture this slot was made for; 0 free */
+    unsigned long stamp;                /* last use, for the least recently used */
+    UBYTE held[PM_MAXPENS];             /* the pens obtained for the picture (to release) */
+    int nheld;
+    UBYTE cpen[PM_MAXPENS];             /* candidate -> screen pen: the ANSI pens, then held */
+    unsigned long usable;               /* candidate bit mask for pm_match */
+    UBYTE *mem;                         /* pm_palette, then PP_BINS * 3 plan bytes, then PP_BINS * 3 bin colours; an
+                                         * indexed (sixel) picture: the pm_palette, then a pp_plan whose a, b are screen pens */
+    BOOL indexed;                       /* made from the picture's palette (sixel), not from its RGB copy (kitty) */
+};
+static struct VtPic vtPic[VT_PIC_SLOTS];
+static struct VtPic *vtPicCur;          /* the slot of the picture being drawn; 0 the plain palette map */
+static unsigned long vtPicUse, vtPicFrees;
+static BOOL vtPicPens;                  /* this screen picks pens for pictures */
+static unsigned long vtPicPicks;        /* sentinel: pictures whose pens were picked (pp_pick) */
+static unsigned long vtPicFree;         /* pens a picture may hold on this screen: 2^depth less DCTelnet's 20 */
+static unsigned long vtPicWt[PP_MAXCOL]; /* pixels per palette entry of the sixel picture being made (VtSixNeedsPicker) */
+
+static void VtPicRelease(struct VtPic *s)
+{
+    int i;
+
+    for (i = 0; i < s->nheld; i++)
+        ReleasePen(scr->ViewPort.ColorMap, (ULONG)s->held[i]);
+    s->nheld = 0;
+    s->serial = 0;
+    if (s->mem) {
+        FreeVec(s->mem);
+        s->mem = NULL;
+    }
+}
+
+static void VtPicReleaseAll(void)
+{
+    int i;
+
+    for (i = 0; i < VT_PIC_SLOTS; i++)
+        VtPicRelease(&vtPic[i]);
+    vtPicCur = NULL;
+    vtImgSerial = -1;
+    vtPicFrees = 0;     /* a new engine counts its frees from 0 */
+}
+
+/* A picture goes (deleted, replaced, a cleared screen): its pens go with it. One counter compare per pass. */
+static void VtPicSweep(void)
+{
+    int i;
+    unsigned long f;
+
+    if (!vtTerm)
+        return;
+    f = vt_image_frees(vtTerm);
+    if (f == vtPicFrees)
+        return;
+    vtPicFrees = f;
+    for (i = 0; i < VT_PIC_SLOTS; i++)
+        if (vtPic[i].serial && !vt_image_alive(vtTerm, vtPic[i].serial)) {
+            if (vtPicCur == &vtPic[i]) {
+                vtPicCur = NULL;
+                vtImgSerial = -1;
+            }
+            VtPicRelease(&vtPic[i]);
+        }
+}
+
+/* ANSI pen colour n (RGB4 in the preferences) as 0xRRGGBB */
+static unsigned long VtAnsiRgb(int n)
+{
+    UWORD c = prefs.AnsiColors[n];
+
+    return ((unsigned long)((c >> 8) & 15) * 17UL << 16) | ((unsigned long)((c >> 4) & 15) * 17UL << 8) |
+           (unsigned long)(c & 15) * 17UL;
+}
+
+static BOOL VtPicMake(struct VtPic *s, const vt_image_view *v)
+{
+    unsigned long *wt = vtPicWt;
+    unsigned long cand[PM_MAXPENS], pick[PM_MAXPENS], pal[PP_MAXCOL];
+    pp_hist_work *wk;
+    pm_palette *cp;
+    UBYTE *plan3;
+    int i, nf = 0, nc, got, np;
+    LONG p;
+
+    s->nheld = 0;
+    s->indexed = v->rgb == NULL;
+    s->mem = (UBYTE *)AllocVec(sizeof(pm_palette) + PP_BINS * 6, MEMF_ANY | MEMF_CLEAR);
+    wk = s->indexed ? NULL : (pp_hist_work *)AllocVec(sizeof(pp_hist_work), MEMF_ANY);
+    if (!s->mem || (!wk && !s->indexed)) {
+        if (wk)
+            FreeVec(wk);
+        if (s->mem) {
+            FreeVec(s->mem);
+            s->mem = NULL;
+        }
+        return FALSE;
+    }
+    if (s->indexed) {                   /* a sixel: the palette is the colour list, vtPicWt (VtSixNeedsPicker) its weights */
+        np = v->npal < PP_MAXCOL ? v->npal : PP_MAXCOL;
+        wt[0] = 0;
+        for (i = 0; i < np; i++)
+            pal[i] = v->pal[i] & 0xFFFFFFUL;
+    } else {
+        np = pp_hist(v->pix, v->rgb, (long)v->w * v->h, wk, pal, wt, s->mem + sizeof(pm_palette) + PP_BINS * 3);
+        FreeVec(wk);
+    }
+    vtPicPicks++;
+    for (i = 0; i < 16 && nf < PM_MAXPENS; i++) {
+        s->cpen[nf] = term_pen_map[i];
+        cand[nf++] = VtAnsiRgb(i);
+    }
+    got = pp_pick(pal, wt, np, cand, nf, PM_MAXPENS - nf, pick);
+    for (i = 0; i < got; i++) {         /* heaviest first: the free pens run out on the lightest */
+        p = VtPenBest(NULL, pick[i], 1);
+        if (p < 0)
+            break;
+        s->held[s->nheld++] = (UBYTE)p;
+    }
+    if (i < got) {                      /* fewer pens than colours: cut again for the number there are */
+        int k = i;
+
+        for (i = 0; i < s->nheld; i++)
+            ReleasePen(scr->ViewPort.ColorMap, (ULONG)s->held[i]);
+        s->nheld = 0;
+        got = pp_pick(pal, wt, np, cand, nf, k, pick);
+        for (i = 0; i < got; i++) {
+            p = VtPenBest(NULL, pick[i], 1);
+            if (p < 0)
+                break;
+            s->held[s->nheld++] = (UBYTE)p;
+        }
+        got = i;
+    }
+    nc = nf;
+    for (i = 0; i < got; i++) {
+        s->cpen[nc] = s->held[i];
+        cand[nc++] = pick[i];
+    }
+    cp = (pm_palette *)s->mem;
+    plan3 = s->mem + sizeof(pm_palette);
+    if (s->indexed) {                   /* every palette entry's two pens, once: a, b as screen pens */
+        pp_plan *pl = (pp_plan *)plan3;
+
+        pp_plan_make(pl, cp, pal, np, cand, nc);
+        for (i = 1; i < np; i++) {
+            pl->a[i] = s->cpen[pl->a[i]];
+            pl->b[i] = s->cpen[pl->b[i]];
+        }
+    } else {
+        pm_palette_set(cp, cand, nc);
+        s->usable = nc >= 32 ? 0xFFFFFFFFUL : ((1UL << nc) - 1);
+        for (i = 0; i < PP_BINS; i++)
+            plan3[i * 3 + 2] = PP_UNSET;
+    }
+    s->serial = v->serial;
+    return TRUE;
+}
+
+/* The slot of picture v: the one made for it, else the least recently used, made now. NULL: none (no memory) */
+static struct VtPic *VtPicSlot(const vt_image_view *v)
+{
+    int i, old = 0;
+
+    for (i = 0; i < VT_PIC_SLOTS; i++) {
+        if (vtPic[i].serial == v->serial) {
+            vtPic[i].stamp = ++vtPicUse;
+            return &vtPic[i];
+        }
+        if (vtPic[i].serial == 0 || vtPic[i].stamp < vtPic[old].stamp)
+            old = i;
+    }
+    VtPicRelease(&vtPic[old]);
+    if (!VtPicMake(&vtPic[old], v))
+        return NULL;
+    vtPic[old].stamp = ++vtPicUse;
+    return &vtPic[old];
+}
+
+/* A sixel needs the picker when it uses more colours than the pens left free: below that the plain per-colour pens
+ * are exact. Leaves the palette weights in vtPicWt for VtPicMake. */
+static BOOL VtSixNeedsPicker(const vt_image_view *v)
+{
+    int i, used = 0, np = v->npal < PP_MAXCOL ? v->npal : PP_MAXCOL;
+
+    pp_weights(v->pix, (long)v->w * v->h, np, vtPicWt);
+    for (i = 1; i < np; i++)
+        used += vtPicWt[i] != 0;
+    return (unsigned long)used + vtTcN > vtPicFree;
+}
+
 static void VtImgColours(const vt_image_view *v)
 {
     int i;
@@ -173,6 +386,12 @@ static void VtImgColours(const vt_image_view *v)
      * canvas or a kitty picture reads it as a palette colour. */
     vtImgMap[0] = (!v->kitty && !v->bg0) ? term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v->pal[0] & 0xFFFFFFUL)))]
                                          : term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
+    vtPicCur = NULL;
+    if (vtPicPens && v->kitty && v->rgb && v->fmt == 0 && (vtPicCur = VtPicSlot(v)) != NULL)
+        return;
+    if (vtPicPens && !v->kitty && !v->rgb && v->fmt == 0 && VtSixNeedsPicker(v) && (vtPicCur = VtPicSlot(v)) != NULL) {
+        return;
+    }
     for (i = 1; i < v->npal && i < 256; i++)
         vtImgMap[i] = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v->pal[i] & 0xFFFFFFUL)))];
 }
@@ -286,7 +505,7 @@ static int VtImgSpans(const VtImgFlat *fl, int n, int k, LONG w, WORD *sp)
 static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h, WORD dx, WORD dy)
 {
     LONG stride = (w + 15) & ~15L;      /* WritePixelArray8 wants rows of 16 */
-    LONG k;
+    LONG k, j;
     static VtImgFlat flat[8 * (VT_IMG_W / VT_IMG_FLAT_MIN)];
     int nflat = 0, i;
     struct EClockVal ea, eb;
@@ -303,7 +522,22 @@ static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h,
         const vt_u8 *src = v->pix + sy * v->w + sx;
         UBYTE *d = vtImgBuf;
         for (k = 0; k < h; k++) {
-            VtImgMapRow(vtImgMap, src, d, (UWORD)w);
+            if (vtPicCur && vtPicCur->indexed) {
+                const pp_plan *pl = (const pp_plan *)(vtPicCur->mem + sizeof(pm_palette));
+
+                for (j = 0; j < w; j++)
+                    d[j] = src[j] ? (UBYTE)pp_pen_at(pl, src[j], (int)(sx + j), (int)(sy + k)) : vtImgMap[0];
+            } else if (vtPicCur) {
+                UBYTE *plan3 = vtPicCur->mem + sizeof(pm_palette), *bc = plan3 + PP_BINS * 3;
+                const UBYTE *px = v->rgb + ((sy + k) * v->w + sx) * 3;
+
+                for (j = 0; j < w; j++)
+                    d[j] = src[j] ? vtPicCur->cpen[pp_pen_bin(plan3, bc, (pm_palette *)vtPicCur->mem, vtPicCur->usable,
+                                                              px + j * 3, (int)(sx + j), (int)(sy + k))]
+                                  : vtImgMap[0];
+            } else {
+                VtImgMapRow(vtImgMap, src, d, (UWORD)w);
+            }
             nflat = VtImgFlats(flat, nflat, d, w, (int)k);
             src += v->w;
             d += stride;
@@ -569,6 +803,7 @@ static void VtDraw(void *user, int x0, int y0, int x1, int y1)
         }
     }
     atr_under = 0;
+    VtPicSweep();       /* the pens of pictures the engine no longer has (also when none is left) */
     if (vt_images(vtTerm))
         VtDrawImages(x0, y0, x1, y1);
 }
@@ -1124,16 +1359,24 @@ static int VtOpen(void)
     vtScrollOff = 0;
     term_cell_source = VtCursorCell;
     VtProbeFont();
+    VtReleasePens();    /* a reopen never leaks the previous display's pens (nothing held: no-op) */
     vtTrueColour = FALSE;
+    vtPicPens = FALSE;
     if (scr && scr->RastPort.BitMap) {
         struct BitMap *bm = scr->RastPort.BitMap;
         ULONG depth = ((struct Library *)GfxBase)->lib_Version >= 39 ? GetBitMapAttr(bm, BMA_DEPTH) : bm->Depth;
 
-        vtTrueColour = depth > 8;
+        UWORD gfxVer = ((struct Library *)GfxBase)->lib_Version;
+        ULONG modeId = gfxVer >= 39 ? GetVPModeID(&scr->ViewPort) : 0;
+
+        vtTrueColour = Vt_ObtainsPens(depth, modeId, gfxVer);
+        vtPicPens = vtTrueColour && depth > 4 && depth < 8;     /* a palette of 32 to 128 pens, shared with the text */
+        vtPicFree = vtPicPens ? (1UL << depth) - 20 : 0;
     }
     if (vtTerm) {
         VtReleasePens();    /* the pens were the old display's */
         VtApplyScrollback();
+        vt_set_image_rgb_copy(vtTerm, vtPicPens);
         vt_resize(vtTerm, term_cols, term_rows);
         vt_set_cell_pixels(vtTerm, 1 << term_xs, 8);   /* pictures: the new font's cells */
         VtSetAspect();      /* the new display may be another mode */
@@ -1151,6 +1394,7 @@ static int VtOpen(void)
     if (!vtTerm)
         return 1;
     vt_set_cell_pixels(vtTerm, 1 << term_xs, 8);       /* pictures are placed on these cells */
+    vt_set_image_rgb_copy(vtTerm, vtPicPens);
     VtSetAspect();
     VtApplyPersonality();
     VtApplyRip();
@@ -1183,6 +1427,7 @@ static void VtRedraw(void)
  * screen closes (CloseConsoleDevice), and when a new display takes over. */
 static void VtReleasePens(void)
 {
+    VtPicReleaseAll();
     while (vtTcN > 0)
         ReleasePen(scr->ViewPort.ColorMap, (ULONG)vtTc[--vtTcN].pen);
     vtTcLast = 0;
