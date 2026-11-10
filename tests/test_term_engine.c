@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <exec/types.h>
 #include "prefs.h"
@@ -47,7 +48,8 @@ static void call(const char *fmt, long a, long b, long c, long d, long e)
 {
     char line[160];
     snprintf(line, sizeof(line), fmt, a, b, c, d, e);
-    strcat(calls, line);
+    if (strlen(calls) + strlen(line) < sizeof(calls))   /* a full log drops the rest */
+        strcat(calls, line);
 }
 
 /* The screen's LayerInfo, as Intuition sees it: the drawing that went into
@@ -97,19 +99,26 @@ static void Text(struct RastPort *rp, STRPTR s, ULONG n)
     snprintf(line, sizeof(line), "Text(%d,%d fg%d bg%d \"%.*s\")\n", rp->cx, rp->cy, rp->FgPen, rp->BgPen, (int)n, s);
     strcat(calls, line);
 }
+#define FB_W 700
+#define FB_H 420
+static UBYTE chunkyFb[FB_W * FB_H];     /* the last pen written at each pixel, 0xFF where none */
 static void RectFill(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
 {
     if (rp->DrawMode == COMPLEMENT)
         call("Complement(%ld,%ld,%ld,%ld mask%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)rp->Mask);
     else
         call("RectFill(%ld,%ld,%ld,%ld pen%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)rp->FgPen);
+    if (rp->DrawMode != COMPLEMENT) {
+        LONG x, y;
+        for (y = y0; y <= y1; y++)
+            for (x = x0; x <= x1; x++)
+                if (x >= 0 && x < FB_W && y >= 0 && y < FB_H)
+                    chunkyFb[y * FB_W + x] = rp->FgPen;
+    }
 }
 /* Pictures (kitty graphics): the chunky writes, one line each with the
  * first pixel's pen. */
 static int chunkyCalls;
-#define FB_W 700
-#define FB_H 420
-static UBYTE chunkyFb[FB_W * FB_H];     /* the last pen written at each pixel, 0xFF where none */
 static void WriteChunkyPixels(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, UBYTE *a, LONG mod)
 {
     LONG x, y, stride = mod ? mod : x1 - x0 + 1;
@@ -133,6 +142,19 @@ static struct BitMap *AllocBitMap(ULONG w, ULONG h, ULONG d, ULONG f, struct Bit
     return friendBm;
 }
 static void FreeBitMap(struct BitMap *b) { (void)b; }
+/* timer.device's ReadEClock for the H2c blit timing: every read moves the
+ * clock on by 7 counts, so one timed blit costs exactly 7. */
+struct Device { int unused; };
+struct EClockVal { ULONG ev_hi, ev_lo; };
+struct Device *TimerBase;
+static ULONG eclockNow;
+static ULONG ReadEClock(struct EClockVal *e)
+{
+    eclockNow += 7;
+    e->ev_hi = 0;
+    e->ev_lo = eclockNow;
+    return 709379;
+}
 static void ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0, LONG x1, LONG y1)
 {
     char line[160];
@@ -279,10 +301,15 @@ static vt_term *probe_new(int cols, int rows, int sb, const vt_callbacks *cb, vo
 /* RMB-FREEZE-RIG2: the engine's parse of a write (a RIP picture rasterises
  * for seconds on an A500), seen from outside: how often it ran with the
  * screen's LayerInfo held, and a menu that opens meanwhile (menuOnParse). */
-static int parses, parsedLocked, menuOnParse;
+static int parses, feeds, parsedLocked, menuOnParse;
 static UBYTE atMenu[4][BPR * H];    /* the planes as the menu opened */
 static void probe_write(vt_term *t, const vt_u8 *buf, long len);
 #define vt_write(t, b, n) probe_write((t), (b), (n))
+static int flushes;                 /* engine draw batches: vt_write (feed + flush) and each vt_flush */
+static void probe_flush(vt_term *t);
+#define vt_flush(t) probe_flush((t))
+static void probe_feed(vt_term *t, const vt_u8 *buf, long len);
+#define vt_feed(t, b, n) probe_feed((t), (b), (n))   /* RIP Auto and active slices parse through vt_feed */
 /* H4: DCTelnet.c's reopen hook and default-screen rule, as counting stubs. */
 static int ripReopens, ripDefaultAsked;
 static ULONG ripReopenDisplayID, ripReopenWas;
@@ -293,9 +320,16 @@ static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h)
     *id = 0x91000UL; *w = 640; *h = 400;
     return FALSE;
 }
+static BOOL ripQueueReopen, ripReopenQueued;   /* a reopen is queued till the test "completes" it */
+static BOOL VtReopenPending(void)
+{
+    return ripReopenQueued;
+}
 static void VtRipScreenChanged(const struct PrefsStruct *before)
 {
     ripReopens++;
+    if (ripQueueReopen)
+        ripReopenQueued = TRUE;
     ripReopenWas = before->DisplayID;
     ripReopenDisplayID = prefs.DisplayID;
     ripReopenRenderer = prefs.State & APP_RENDERER_ALL;
@@ -305,15 +339,33 @@ struct SiteHandChanges handChanges;     /* DCTelnet.c's record of temporary chan
 ULONG sessionSettingsId;                /* 0: a quick connect, no entry session */
 #include "../src/vtbuiltin.c"
 #undef vt_write
-static void probe_write(vt_term *t, const vt_u8 *buf, long len)
+#undef vt_flush
+#undef vt_feed
+static void probe_flush(vt_term *t)
 {
-    parses++;
+    flushes++;
+    vt_flush(t);
+}
+static void probe_parse_hook(void)
+{
     parsedLocked += layerLocks;
     if (menuOnParse) {
         screen.LayerInfo.top_layer = &menuLayer;
         memcpy(atMenu, planes, sizeof(atMenu));
     }
+}
+static void probe_write(vt_term *t, const vt_u8 *buf, long len)
+{
+    parses++;
+    flushes++;
+    probe_parse_hook();
     vt_write(t, buf, len);
+}
+static void probe_feed(vt_term *t, const vt_u8 *buf, long len)
+{
+    feeds++;
+    probe_parse_hook();
+    vt_feed(t, buf, len);
 }
 #undef term_glyph
 #undef vt_new
@@ -622,9 +674,9 @@ static void test_a_menu_opens_while_a_rip_picture_is_parsed(void)
 {
     setup();
     assert(VtOpen() == 0);
-    parses = parsedLocked = bltUnlocked = 0;     /* (term_init_area's clear) */
+    parses = feeds = parsedLocked = bltUnlocked = 0;     /* (term_init_area's clear) */
     vt_write_str("Hello");
-    assert(parses > 0 && parsedLocked == 0);    /* parsed with the layers free */
+    assert(parses + feeds > 0 && parsedLocked == 0);    /* parsed (vt_write or sliced vt_feed) with the layers free */
     assert(calls[0] == 0 && bltUnlocked == 0);  /* drawn into the bitmap, held */
     assert(planes[0][TOP * BPR] == 'H');
     assert(layerLocks == 0);
@@ -1823,6 +1875,22 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     vtImgRuns = 0;
     vt_put("!|S0101|B0A0A2S2S\r\n");
     assert(vtImgRuns > 0);
+    /* H2c: with timing on, a full redraw sums one clock delta per blit and
+     * nothing for the text; off, the sum stays put */
+    vtImgRuns = 0;
+    vtImgBlitCounts = 0;
+    vtImgTime = TRUE;
+    VtDraw(NULL, 0, 0, term_cols, term_rows);
+    vtImgTime = FALSE;
+    assert(vtImgRuns > 0 && vtImgBlitCounts == 7 * vtImgRuns);
+    VtDraw(NULL, 0, 0, term_cols, term_rows);
+    assert(vtImgBlitCounts == 7 * (vtImgRuns / 2));
+    /* A500 size: 9 s per redraw over 10 redraws on the PAL E-clock. The old
+     * (counts / n) * 1000 wrapped past 2^32 here and printed a small number. */
+    assert(VtEClockUs(709379UL * 90, 10, 709379UL) == 9000000UL);
+    assert(VtEClockUs(709379UL, 1, 709379UL) == 1000000UL);
+    assert(VtEClockUs(354689UL, 1, 709379UL) == 499999UL);
+    assert(VtEClockUs(5, 0, 709379UL) == 0 && VtEClockUs(5, 1, 0) == 0);
 }
 
 /* RIP palette entry 0 is a real colour: set non-black, the canvas pixels of
@@ -2083,6 +2151,335 @@ static void test_rip_h7_replay_checksum_equals_the_vtcon_golden(void)
     VtClose();
 }
 
+/* Plan H2c part A: the canvas's long single-colour runs reach the screen as
+ * RectFills (the blitter), the mixed spans as chunky blits. The fixture is
+ * vtcon's 07-buttons.rip after ESC [ !; the sum is its replayed canvas (the same
+ * as before the change), the RectFill count the sentinel that the flat path ran. */
+static void test_rip_h2c_a_flat_runs_go_out_as_rectfills_through_vtwrite(void)
+{
+    static UBYTE buf[512];
+    FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
+    size_t n;
+    vt_image_view v;
+    int x, y;
+
+    assert(f);
+    n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    assert(n > 0 && n < sizeof buf);
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[!");
+    vtImgFills = 0;
+    chunkyCalls = 0;
+    VtWrite(buf, (long)n);
+    assert(vt_rip_commands(vtTerm) > 0);
+    assert(VtCanvasSum() == 621586454UL);
+    assert(vtImgFills > 0);                         /* the sentinel: flat runs ran */
+    assert(strstr(calls, "RectFill("));
+    /* RectFills and chunky blits together leave every canvas pixel at its mapped pen */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    for (y = 0; y < v.h && y < term_rows * 8; y++)      /* the rows the screen shows */
+        for (x = 0; x < v.w; x++)
+            assert(chunkyFb[(TERM_PY(0) + y) * FB_W + TERM_PX(0) + x] == vtImgMap[v.pix[y * v.w + x]]);
+    VtClose();
+}
+
+/* Plan H2c: the optimised pen-map / flat-run / mixed-span path against the
+ * original per-pixel algorithm, kept here as the reference. */
+static int ref_flats(VtImgFlat *fl, int n, const UBYTE *row, LONG w, int k)
+{
+    LONG a = 0, b;
+    int was = n;
+
+    while (a < w) {
+        for (b = a + 1; b < w && row[b] == row[a]; b++)
+            ;
+        if (b - a >= VT_IMG_FLAT_MIN) {
+            int m;
+            for (m = 0; m < was; m++)
+                if (fl[m].y1 == k - 1 && fl[m].x0 == a && fl[m].x1 == b - 1 && fl[m].pen == row[a])
+                    break;
+            if (m < was) {
+                fl[m].y1 = (BYTE)k;
+            } else {
+                fl[n].x0 = (WORD)a; fl[n].x1 = (WORD)(b - 1);
+                fl[n].y0 = fl[n].y1 = (BYTE)k;
+                fl[n].pen = row[a];
+                n++;
+            }
+        }
+        a = b;
+    }
+    return n;
+}
+
+static int ref_spans(const VtImgFlat *flat, int nflat, int k, LONG w, WORD *sp)
+{
+    LONG x = 0;
+    int i, ns = 0;
+
+    while (x < w) {
+        LONG e = x;
+        int isFlat = 0;
+        for (i = 0; i < nflat; i++)
+            if (flat[i].y0 <= k && k <= flat[i].y1 && flat[i].x0 == x) {
+                e = flat[i].x1 + 1;
+                isFlat = 1;
+                break;
+            }
+        if (isFlat) {
+            x = e;
+            continue;
+        }
+        for (e = x; e < w; e++) {
+            for (i = 0; i < nflat; i++)
+                if (flat[i].y0 <= k && k <= flat[i].y1 && flat[i].x0 == e)
+                    break;
+            if (i < nflat)
+                break;
+        }
+        sp[2 * ns] = (WORD)x;
+        sp[2 * ns + 1] = (WORD)e;
+        ns++;
+        x = e;
+    }
+    return ns;
+}
+
+/* h rows of w pixels laid out by runs[]: lengths of alternating pens, repeated per row
+ * (rowkind 0), or shifted by one pixel on odd rows (rowkind 1) so rectangles do not grow. */
+static void h2c_equiv_case(const char *name, LONG w, int h, const int *runs, int nruns, int rowkind, unsigned seed)
+{
+    static UBYTE src[8 * 1280], mapped[8 * 1280], refbuf[8 * 1280];
+    static UBYTE map[256];
+    static VtImgFlat f1[8 * (VT_IMG_W / VT_IMG_FLAT_MIN)], f2[8 * (VT_IMG_W / VT_IMG_FLAT_MIN)];
+    int n1 = 0, n2 = 0, k, i, r;
+    LONG stride = (w + 15) & ~15L;
+
+    (void)name;
+    for (i = 0; i < 256; i++)
+        map[i] = (UBYTE)(255 - i);
+    for (k = 0; k < h; k++) {
+        LONG x = 0;
+        int pen = (int)(seed & 7);
+        for (r = 0; x < w; r++) {
+            int len = runs[r % nruns];
+            if (rowkind == 1 && (k & 1) && r == 0)
+                len++;
+            while (len-- > 0 && x < w)
+                src[k * stride + x++] = (UBYTE)pen;
+            pen = (pen + 1 + (int)(seed >> 3 & 1)) & 7;
+        }
+    }
+    for (k = 0; k < h; k++) {
+        VtImgMapRow(map, src + k * stride, mapped + k * stride, (UWORD)w);
+        for (i = 0; i < w; i++)
+            refbuf[k * stride + i] = map[src[k * stride + i]];
+        assert(memcmp(mapped + k * stride, refbuf + k * stride, (size_t)w) == 0);
+        n1 = VtImgFlats(f1, n1, mapped + k * stride, w, k);
+        n2 = ref_flats(f2, n2, refbuf + k * stride, w, k);
+    }
+    assert(n1 == n2);
+    assert(memcmp(f1, f2, (size_t)n1 * sizeof f1[0]) == 0);
+    for (k = 0; k < h; k++) {
+        WORD s1[2 * VT_IMG_SPANS_MAX], s2[2 * VT_IMG_SPANS_MAX];
+        int a = VtImgSpans(f1, n1, k, w, s1), b = ref_spans(f2, n2, k, w, s2);
+        assert(a == b);
+        assert(memcmp(s1, s2, (size_t)a * 2 * sizeof s1[0]) == 0);
+    }
+}
+
+static void test_rip_h2c_spans_new_path_equals_the_old_algorithm(void)
+{
+    int none[] = {1, 2, 3, 5, 7};
+    int one[] = {1280};
+    int mn1[] = {VT_IMG_FLAT_MIN - 1};
+    int mn[] = {VT_IMG_FLAT_MIN};
+    int mixed[] = {3, VT_IMG_FLAT_MIN, 5, VT_IMG_FLAT_MIN + 7, 1, VT_IMG_FLAT_MIN - 1};
+    int edge[] = {VT_IMG_FLAT_MIN, 4, VT_IMG_FLAT_MIN};
+    int tail[] = {2, VT_IMG_FLAT_MIN};
+    LONG ws[] = {1, 8, 31, 32, 33, 64, 100, 640, 1280};
+    unsigned i;
+    int h;
+
+    for (i = 0; i < sizeof ws / sizeof ws[0]; i++)
+        for (h = 1; h <= 8; h += 7) {
+            h2c_equiv_case("none", ws[i], h, none, 5, 0, 0);
+            h2c_equiv_case("all flat", ws[i], h, one, 1, 0, 1);
+            h2c_equiv_case("min-1", ws[i], h, mn1, 1, 0, 2);
+            h2c_equiv_case("min", ws[i], h, mn, 1, 0, 3);
+            h2c_equiv_case("mixed", ws[i], h, mixed, 6, 0, 4);
+            h2c_equiv_case("mixed shifted", ws[i], h, mixed, 6, 1, 9);
+            h2c_equiv_case("edges", ws[i], h, edge, 3, 0, 5);
+            h2c_equiv_case("tail", ws[i], h, tail, 2, 1, 6);
+        }
+}
+
+/* Plan H2c part B: with RIP active a write of several commands draws after each
+ * finished command, not once at the end; with RIP off one write is one draw. */
+static void test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite(void)
+{
+    static const char pic[] = "!|S0109|B0A0A2S2S\r\n!|S0102|B323264642S\r\n!|c0A\r\n";
+    int onFlushes;
+    long cmds;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[!");
+    parses = flushes = 0;
+    cmds = vt_rip_commands(vtTerm);
+    VtWrite((const UBYTE *)pic, (long)strlen(pic));
+    onFlushes = flushes;
+    assert(parses == 0);                            /* the sliced path, not vt_write */
+    assert(vt_rip_commands(vtTerm) - cmds >= 3);
+    assert(onFlushes >= 4);                         /* a flush per finished command, plus the last */
+    assert(layerLocks == 0);                        /* every flush gave the layers back */
+    VtClose();
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_OFF;
+    VtApplyRip();
+    parses = flushes = 0;
+    VtWrite((const UBYTE *)pic, (long)strlen(pic));
+    assert(parses == 1 && flushes == 1);            /* RIP off: unchanged, one draw */
+    VtClose();
+}
+
+/* The reference: the same bytes in Auto through one engine vt_write (the path before
+ * part C). Bare `!|` activation, so it differs from the On + ESC[! sum of part A. */
+static unsigned long rip_auto_oneshot_sum(void)
+{
+    static UBYTE buf[512];
+    unsigned long sum;
+    FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
+    size_t n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO; prefs.RipScreen = RIPSCREEN_FIT;
+    VtApplyRip();
+    vt_write(vtTerm, buf, (long)n);
+    sum = (unsigned long)VtCanvasSum();
+    VtClose();
+    return sum;
+}
+/* Plan H2c part C: RIP Auto, and the first chunk holds the `!|` line that turns RIP
+ * on. The rest of that chunk is drawn command by command, on the RIP screen: held
+ * while the screen reopen runs (VtHeldResume, the main loop's call after it), at
+ * once when the screen is kept. The fixture is vtcon's 07-buttons.rip in ONE
+ * VtWrite; the sum is its one-shot canvas. vtHeldLen is the sentinel that the hold
+ * ran, flushes the per-command drawing. */
+static void rip_auto_chunk(BOOL reopen, int *flushesAfter, int *heldAfterWrite)
+{
+    static UBYTE buf[512];
+    FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
+    size_t n;
+
+    assert(f);
+    n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    assert(n > 0 && n < sizeof buf);
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO;
+    prefs.RipScreen = RIPSCREEN_FIT;
+    VtApplyRip();
+    assert(!vt_rip_active(vtTerm));
+    ripQueueReopen = reopen;
+    ripReopenQueued = FALSE;
+    parses = flushes = 0;
+    VtWrite(buf, (long)n);
+    *heldAfterWrite = (int)vtHeldLen;
+    if (reopen) {
+        assert(ripReopenQueued);                        /* the screen switch asked for a reopen */
+        assert(vtHeldLen > 0);                          /* the rest waits for it */
+        assert(vt_rip_commands(vtTerm) < 20);           /* and is not parsed yet */
+        VtWrite((const UBYTE *)"", 0);                  /* (empty data while held: no effect) */
+        ripReopenQueued = FALSE;                        /* the main loop's reopen finished ... */
+        VtHeldResume();                                 /* ... and resumes, as DCTelnet.c does */
+    }
+    *flushesAfter = flushes;
+    ripQueueReopen = FALSE;
+    assert(vt_rip_active(vtTerm) == 1);
+    assert(vt_rip_commands(vtTerm) > 0);                /* the sentinel: the parser ran */
+    assert(vtHeldLen == 0 && vtHeld == NULL);           /* nothing held at the end */
+    assert(layerLocks == 0);
+    assert((unsigned long)VtCanvasSum() == 2553612577UL);   /* the one-shot Auto canvas */
+    {
+        int keep = parses;
+
+        assert((unsigned long)VtCanvasSum() == rip_auto_oneshot_sum());   /* measured, not just remembered */
+        parses = keep;                                  /* (the reference used vt_write) */
+    }
+}
+
+static void test_rip_h2c_c_auto_chunk_rest_is_drawn_per_command_after_the_reopen(void)
+{
+    int fl, held;
+
+    rip_auto_chunk(TRUE, &fl, &held);
+    assert(held > 0);
+    assert(parses == 0);                                /* sliced path throughout, never vt_write */
+    assert(fl >= 4);                                    /* a flush per finished command after activation */
+    VtClose();
+}
+
+static void test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_asked(void)
+{
+    int fl, held;
+
+    rip_auto_chunk(FALSE, &fl, &held);
+    assert(held == 0);                                  /* fed inside the same VtWrite */
+    assert(parses == 0);
+    assert(fl >= 4);
+    VtClose();
+}
+
+/* Bytes that arrive while the rest is held go behind it; text before the `!|` line
+ * is drawn as it always was. */
+static void test_rip_h2c_c_text_before_the_bar_line_and_bytes_behind_the_hold(void)
+{
+    static const char pic[] = "hello\r\nworld\r\n!|S0109|B0A0A2S2S\r\n!|c0A\r\n";
+    static const char more[] = "!|B323264642S\r\n";
+    const vt_cell *row;
+    int nc;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO;
+    prefs.RipScreen = RIPSCREEN_FIT;
+    VtApplyRip();
+    ripQueueReopen = TRUE;
+    ripReopenQueued = FALSE;
+    VtWrite((const UBYTE *)pic, (long)strlen(pic));
+    row = vt_row(vtTerm, 0, &nc);
+    assert(row[0].ch == 'h' && row[4].ch == 'o');       /* text before the `!|` line: drawn, unchanged */
+    row = vt_row(vtTerm, 1, &nc);
+    assert(row[0].ch == 'w');
+    assert(vt_rip_active(vtTerm) && vtHeldLen > 0);
+    {
+        long was = vtHeldLen;
+
+        VtWrite((const UBYTE *)more, (long)strlen(more));       /* arrives while held */
+        assert(vtHeldLen == was + (long)strlen(more));
+        assert(memcmp(vtHeld + was, more, strlen(more)) == 0);  /* behind it */
+    }
+    ripReopenQueued = FALSE;
+    ripQueueReopen = FALSE;
+    VtHeldResume();
+    assert(vtHeldLen == 0 && vtHeld == NULL);
+    VtClose();
+}
+
 /* The RIP switch is temporary for the run: in a quick connect (no entry
  * session) the live prefs are what SavePrefs writes, so what it would save
  * must still be the pre-RIP screen and renderer while RIP is active. */
@@ -2138,6 +2535,12 @@ int main(void)
     test_a_menu_open_over_the_terminal_is_drawn_around();
     test_a_menu_opened_while_an_answer_is_sent_is_drawn_around();
     test_a_menu_opens_while_a_rip_picture_is_parsed();
+    test_rip_h2c_a_flat_runs_go_out_as_rectfills_through_vtwrite();
+    test_rip_h2c_spans_new_path_equals_the_old_algorithm();
+    test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite();
+    test_rip_h2c_c_auto_chunk_rest_is_drawn_per_command_after_the_reopen();
+    test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_asked();
+    test_rip_h2c_c_text_before_the_bar_line_and_bytes_behind_the_hold();
     test_ma1_2_line_art_lands_in_the_grid_and_reaches_the_glyph_writer();
     test_ma1_3_blocks_and_shades_map_to_themselves_never_to_the_fallback();
     test_ma1_1_latin1_byte_reaches_the_glyph_writer_unchanged();

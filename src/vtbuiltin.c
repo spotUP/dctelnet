@@ -110,6 +110,31 @@ static UBYTE vtImgBuf[8 * VT_IMG_W];    /* one cell row of a run: 8 pixels high 
 static UBYTE vtImgMap[256];             /* the picture's palette index -> screen pen */
 static long vtImgSerial = -1;           /* the picture vtImgMap was made for */
 static unsigned long vtImgRuns;         /* sentinel: picture runs written */
+static unsigned long vtImgFills;        /* sentinel: flat runs sent out as RectFill */
+/* Plan H2c: a row's run of one pen at least this many pixels long goes to the
+ * blitter as a RectFill; only the mixed spans between go through the chunky blit. */
+#define VT_IMG_FLAT_MIN 32
+/* Plan H2c: --replay times the OS blit calls alone (E-clock counts summed while
+ * vtImgTime is set), so a redraw splits into blit time and the rest. */
+extern struct Device *TimerBase;
+static BOOL vtImgTime;
+static ULONG vtImgBlitCounts;
+
+/* E-clock counts over n runs as microseconds per run, without 64-bit maths.
+ * (counts / n) * 1000 wraps past 2^32 at about 6 s per run on a 709379 Hz
+ * PAL E-clock (an A500 RIP redraw is slower than that), so the whole seconds
+ * and the remainder are scaled apart: no overflow below about 4294 s. */
+static ULONG VtEClockUs(ULONG counts, ULONG n, ULONG perSecond)
+{
+    ULONG c, r;
+
+    if (!n || !perSecond)
+        return 0;
+    c = counts / n;
+    r = c % perSecond;
+    return (c / perSecond) * 1000000UL + ((r * 1000UL) / perSecond) * 1000UL
+         + (((r * 1000UL) % perSecond) * 1000UL) / perSecond;
+}
 
 /* FNV-1a over the RIPscrip canvas, one byte a pixel: the same sum as vtcon's
  * tests/test_rip.c canvas_sum, so a run here compares with its goldens. 0 when
@@ -152,27 +177,175 @@ static void VtImgColours(const vt_image_view *v)
         vtImgMap[i] = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v->pal[i] & 0xFFFFFFUL)))];
 }
 
+static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, const UBYTE *buf, LONG stride);
+
+/* One flat rectangle of a band: pixels x0..x1 (inclusive), rows y0..y1 of the band, one pen. */
+typedef struct {
+    WORD x0, x1;
+    BYTE y0, y1;
+    UBYTE pen;
+} VtImgFlat;
+
+/* One row of the picture through the pen map: dst[i] = map[src[i]], n >= 1.
+ * On the 68000 a C loop with LONG indices costs about 80 cycles a pixel (index
+ * widened and scaled, pointer re-derived); move.b (a1)+ / move.b (a0,d2.w),(a2)+ /
+ * dbf is 8 + 18 + 10 = 36. d2 and a2 are callee-saved, so the text saves them. */
+#if defined(__VBCC__) && defined(__M68K__)
+static void VtImgMapRow(__reg("a0") const UBYTE *map, __reg("a1") const vt_u8 *src,
+                        __reg("d1") UBYTE *dst, __reg("d0") UWORD n) =
+    "\tmovem.l\ta2/d2,-(sp)\n"
+    "\tmove.l\td1,a2\n"
+    "\tmoveq\t#0,d2\n"
+    "\tsubq.w\t#1,d0\n"
+    "\tmove.b\t(a1)+,d2\n"
+    "\tmove.b\t(a0,d2.w),(a2)+\n"
+    "\tdbf\td0,*-6\n"
+    "\tmovem.l\t(sp)+,a2/d2\n";
+#else
+static void VtImgMapRow(const UBYTE *map, const vt_u8 *src, UBYTE *dst, UWORD n)
+{
+    while (n--)
+        *dst++ = map[*src++];
+}
+#endif
+
+/* A row's runs of one pen >= VT_IMG_FLAT_MIN: a run that repeats the previous
+ * row's (same x0, x1, pen) grows that rectangle taller. Returns the count in fl.
+ * The run scan is a pointer walk (about 20 cycles a pixel); the previous rectangles
+ * are searched once per run, never per pixel. */
+static int VtImgFlats(VtImgFlat *fl, int n, const UBYTE *row, LONG w, int k)
+{
+    const UBYTE *p = row, *end = row + w;
+    int was = n;
+
+    while (p < end) {
+        const UBYTE *q = p;
+        UBYTE pen = *p;
+        while (++q < end && *q == pen)
+            ;
+        if (q - p >= VT_IMG_FLAT_MIN) {
+            WORD a = (WORD)(p - row), x1 = (WORD)(q - row - 1);
+            int m;
+            for (m = 0; m < was; m++)
+                if (fl[m].y1 == k - 1 && fl[m].x0 == a && fl[m].x1 == x1 && fl[m].pen == pen)
+                    break;
+            if (m < was) {
+                fl[m].y1 = (BYTE)k;
+            } else {
+                fl[n].x0 = a; fl[n].x1 = x1;
+                fl[n].y0 = fl[n].y1 = (BYTE)k;
+                fl[n].pen = pen;
+                n++;
+            }
+        }
+        p = q;
+    }
+    return n;
+}
+
+/* Row k's mixed spans, the pixels the flat rectangles leave: sp gets [start, end)
+ * pairs, the count is returned. One pass over the n rectangles per row (the rows
+ * of a band are 8), the covering ones insertion-sorted by x0, then a cursor that
+ * only moves right; the old code rescanned all n rectangles for every pixel. */
+#define VT_IMG_SPANS_MAX (VT_IMG_W / VT_IMG_FLAT_MIN + 2)
+static int VtImgSpans(const VtImgFlat *fl, int n, int k, LONG w, WORD *sp)
+{
+    WORD cx0[VT_IMG_W / VT_IMG_FLAT_MIN + 1], cx1[VT_IMG_W / VT_IMG_FLAT_MIN + 1];
+    int nc = 0, i, j, ns = 0;
+    WORD x = 0;
+
+    for (i = 0; i < n; i++) {
+        if (fl[i].y0 <= k && k <= fl[i].y1) {
+            WORD a = fl[i].x0, b = fl[i].x1;
+            for (j = nc; j > 0 && cx0[j - 1] > a; j--) {
+                cx0[j] = cx0[j - 1];
+                cx1[j] = cx1[j - 1];
+            }
+            cx0[j] = a;
+            cx1[j] = b;
+            nc++;
+        }
+    }
+    for (i = 0; i < nc; i++) {
+        if (cx0[i] > x) {
+            sp[2 * ns] = x;
+            sp[2 * ns + 1] = cx0[i];
+            ns++;
+        }
+        x = cx1[i] + 1;
+    }
+    if (x < w) {
+        sp[2 * ns] = x;
+        sp[2 * ns + 1] = (WORD)w;
+        ns++;
+    }
+    return ns;
+}
+
 /* w x h pixels of v from (sx, sy) to RastPort pixel (dx, dy). */
 static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h, WORD dx, WORD dy)
 {
     LONG stride = (w + 15) & ~15L;      /* WritePixelArray8 wants rows of 16 */
-    LONG k, j;
+    LONG k;
+    static VtImgFlat flat[8 * (VT_IMG_W / VT_IMG_FLAT_MIN)];
+    int nflat = 0, i;
+    struct EClockVal ea, eb;
+    UBYTE oldPen;
+    UBYTE oldMode;
 
     struct RastPort *rp = VtImgRp();
 
-    if (stride > VT_IMG_W || h > 8 || !rp)
+    /* w < 1 must return here: VtImgMapRow's dbf loop would run 65536 times for 0 */
+    if (w < 1 || h < 1 || stride > VT_IMG_W || h > 8 || !rp)
         return;
     VtImgColours(v);
-    for (k = 0; k < h; k++) {
-        const vt_u8 *src = v->pix + (sy + k) * v->w + sx;
-        UBYTE *d = vtImgBuf + k * stride;
-        for (j = 0; j < w; j++)
-            d[j] = vtImgMap[src[j]];
+    {   /* row pointers advance by addition: no per-row multiply (about 200 cycles each) */
+        const vt_u8 *src = v->pix + sy * v->w + sx;
+        UBYTE *d = vtImgBuf;
+        for (k = 0; k < h; k++) {
+            VtImgMapRow(vtImgMap, src, d, (UWORD)w);
+            nflat = VtImgFlats(flat, nflat, d, w, (int)k);
+            src += v->w;
+            d += stride;
+        }
     }
     vtImgRuns++;
     term_blit_sync();                   /* the glyph blits are done with the planes */
+    if (vtImgTime)
+        ReadEClock(&ea);
+    if (!nflat) {
+        VtImgBlit(rp, dx, dy, w, h, vtImgBuf, stride);
+    } else {
+        oldPen = rp->FgPen;
+        oldMode = rp->DrawMode;
+        SetDrMd(rp, JAM2);
+        for (i = 0; i < nflat; i++) {
+            SetAPen(rp, flat[i].pen);
+            RectFill(rp, dx + flat[i].x0, dy + flat[i].y0, dx + flat[i].x1, dy + flat[i].y1);
+            vtImgFills++;
+        }
+        SetAPen(rp, oldPen);
+        SetDrMd(rp, oldMode);
+        /* the mixed spans between the flat runs, row by row */
+        for (k = 0; k < h; k++) {
+            WORD sp[2 * VT_IMG_SPANS_MAX];
+            const UBYTE *row = vtImgBuf + k * stride;
+            int ns = VtImgSpans(flat, nflat, (int)k, w, sp);
+            for (i = 0; i < ns; i++)
+                VtImgBlit(rp, dx + sp[2 * i], dy + k, sp[2 * i + 1] - sp[2 * i], 1, row + sp[2 * i], stride);
+        }
+    }
+    if (vtImgTime) {
+        ReadEClock(&eb);
+        vtImgBlitCounts += eb.ev_lo - ea.ev_lo;   /* one run is far below 2^32 counts */
+    }
+}
+
+/* buf (rows of stride bytes) to RastPort pixel (dx, dy), w x h. */
+static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, const UBYTE *buf, LONG stride)
+{
     if (((struct Library *)GfxBase)->lib_Version >= 40) {
-        WriteChunkyPixels(rp, dx, dy, dx + w - 1, dy + h - 1, vtImgBuf, stride);
+        WriteChunkyPixels(rp, dx, dy, dx + w - 1, dy + h - 1, (UBYTE *)buf, stride);
     } else if (((struct Library *)GfxBase)->lib_Version >= 39) {
         /* Kickstart 3.0: WritePixelArray8 and its one-row scratch rastport */
         struct RastPort tmp = *rp;
@@ -180,7 +353,7 @@ static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h,
         tmp.Layer = NULL;
         tmp.BitMap = AllocBitMap((ULONG)stride, 1, GetBitMapAttr(rp->BitMap, BMA_DEPTH), 0, rp->BitMap);
         if (tmp.BitMap) {
-            WritePixelArray8(rp, dx, dy, dx + w - 1, dy + h - 1, vtImgBuf, &tmp);
+            WritePixelArray8(rp, dx, dy, dx + w - 1, dy + h - 1, (UBYTE *)buf, &tmp);
             FreeBitMap(tmp.BitMap);
         }
     }
@@ -654,9 +827,41 @@ static void VtRipWatch(void)
     VtRipScreenChanged(&before);
 }
 
+/* RIP Auto, plan H2c part C: a chunk in which RIP turns active halfway has its
+ * rest drawn command by command on the RIP screen, not in the one flush the
+ * plain-text path would make. The rest waits here while the screen reopens that
+ * VtRipWatch asked for (DCTelnet.c: shouldRestart / shouldReopenConsole), and is
+ * fed by VtHeldResume() once the new display is open. Bytes that arrive meanwhile
+ * go behind it, so the order never changes. Heap, owned here; freed when the
+ * remainder is fed, on a new connection (VtSniffReset), a settings end (VtRipEnd)
+ * and with the terminal (VtClose). */
+static UBYTE *vtHeld;
+static long vtHeldLen;
+
+static void VtHeldFree(void)
+{
+    free(vtHeld);
+    vtHeld = NULL;
+    vtHeldLen = 0;
+}
+
+/* Append behind what is held; FALSE (nothing appended) when memory is short. */
+static BOOL VtHeldAppend(const UBYTE *data, long len)
+{
+    UBYTE *grown = (UBYTE *)realloc(vtHeld, (size_t)(vtHeldLen + len));
+
+    if (!grown)
+        return FALSE;
+    memcpy(grown + vtHeldLen, data, (size_t)len);
+    vtHeld = grown;
+    vtHeldLen += len;
+    return TRUE;
+}
+
 /* The session ended (or its settings did): a RIP switch still in force is undone. */
 static void VtRipEnd(void)
 {
+    VtHeldFree();
     if (vtRipSeen && vtTerm)
     {
         vt_set_rip(vtTerm, 0);          /* inactive: VtRipWatch puts the screen back */
@@ -678,6 +883,7 @@ static void VtSetDownloadHost(const char *host)
 
 static void VtSniffReset(void)
 {
+    VtHeldFree();
     Vt_Utf8SnifferReset(&vtSniff);
 }
 
@@ -972,6 +1178,7 @@ static void VtReleasePens(void)
 /* The engine and its cells go: quitting, or another renderer. */
 static void VtClose(void)
 {
+    VtHeldFree();
     VtReleasePens();
     if (vtTerm) {
         vt_free(vtTerm);
@@ -1042,9 +1249,86 @@ static BOOL VtScrollKey(UWORD rawkey, BOOL shift)
     return TRUE;
 }
 
+/* Plan H2c: bytes into the engine. RIP not active: vt_write, one parse and one
+ * draw. RIP active: the bytes go in as slices that end at each '|' or LF (a split
+ * only sets the flush granularity; the engine's parser is stream-safe and stays the
+ * only one), and the drawing goes out whenever the engine finished a RIP command
+ * since the last flush, so a picture builds up command by command the way it did on
+ * the old machines. Each flush takes the layers for its drawing and gives them back
+ * (VtDrawPause), so a menu can still open between commands. The bytes after the
+ * last finished command are drawn by a last vt_flush, as vt_write would. */
+static void VtFeedRip(const UBYTE *data, long len)
+{
+    long done = vt_rip_commands(vtTerm);
+
+    while (len > 0) {
+        const UBYTE *bar = memchr(data, '|', (size_t)len);
+        const UBYTE *lf = memchr(data, '\n', (size_t)len);
+        const UBYTE *end = bar && (!lf || bar < lf) ? bar : lf;
+        long n = end ? (long)(end - data) + 1 : len;
+
+        vt_feed(vtTerm, data, n);
+        data += n;
+        len -= n;
+        if (vt_rip_commands(vtTerm) != done) {
+            done = vt_rip_commands(vtTerm);
+            vt_flush(vtTerm);
+            VtDrawPause();
+        }
+    }
+    vt_flush(vtTerm);
+}
+
+/* The bytes of one VtWrite, after the UTF-8 sniffer. Plan H2c part C: in RIP Auto
+ * with RIP not yet active the chunk goes in as slices that end at each LF, and
+ * when a slice turns RIP active the rest is held (vtHeld) for VtWriteIn to feed
+ * through VtFeedRip once the RIP screen is up. Off and On, and Auto already
+ * active, are as before. */
+static void VtFeed(const UBYTE *data, long len)
+{
+    if (len <= 0)
+        return;
+    if (vtHeldLen) {                    /* behind what waits: byte order never changes */
+        if (VtHeldAppend(data, len))
+            return;
+        while (vtHeldLen) {             /* no memory: the held bytes go first, then these */
+            UBYTE *held = vtHeld;
+            long n = vtHeldLen;
+
+            vtHeld = NULL;
+            vtHeldLen = 0;
+            VtFeedRip(held, n);
+            free(held);
+        }
+    }
+    if (vt_rip_active(vtTerm)) {
+        VtFeedRip(data, len);
+        return;
+    }
+    if (Prefs_RipEngineMode(&prefs) != 2) {
+        vt_write(vtTerm, data, len);
+        return;
+    }
+    while (len > 0) {
+        const UBYTE *lf = memchr(data, '\n', (size_t)len);
+        long n = lf ? (long)(lf - data) + 1 : len;
+
+        vt_feed(vtTerm, data, n);
+        data += n;
+        len -= n;
+        if (len > 0 && vt_rip_active(vtTerm)) {
+            vt_flush(vtTerm);
+            if (!VtHeldAppend(data, len))
+                VtFeedRip(data, len);   /* no memory: the rest goes out now, unheld */
+            return;
+        }
+    }
+    vt_flush(vtTerm);
+}
+
 /* Bytes from the BBS (or DCTelnet's own messages): parse, draw what
  * changed, put the cursor back. Drawing happens with the cursor hidden. */
-static void VtWrite(const UBYTE *data, long len)
+static void VtWriteIn(const UBYTE *data, long len, BOOL sniff)
 {
     if (vtScrollOff)
         VtScrollView(-vtScrollOff);     /* new output: back to the live grid */
@@ -1052,22 +1336,49 @@ static void VtWrite(const UBYTE *data, long len)
     /* Unix host, Character Set not UTF-8: the first valid UTF-8 sequence moves
      * the engine to UTF-8 for the rest of the connection; prefs stay as they are.
      * A trailing incomplete prefix is held back until the next write decides it. */
-    if (Vt_Utf8SnifferActive(&prefs) || vtSniff.nheld) {
+    if (sniff && (Vt_Utf8SnifferActive(&prefs) || vtSniff.nheld)) {
         UBYTE pre[3];
         long npre, ndata;
 
         if (Vt_Utf8SnifferFeed(&vtSniff, &prefs, data, len, pre, &npre, &ndata))
             vt_set_charset(vtTerm, VT_CS_UTF8);
         if (npre)
-            vt_write(vtTerm, pre, npre);
-        vt_write(vtTerm, data, ndata);
+            VtFeed(pre, npre);
+        VtFeed(data, ndata);
     } else
-        vt_write(vtTerm, data, len);
+        VtFeed(data, len);
     vtInWrite = FALSE;
     VtRipWatch();                   /* the one place RIP going active/inactive is noticed */
+    /* RIP Auto went active halfway through the chunk: when no screen reopen was asked
+     * for (RIPSCREEN_FIT keeps the screen) the rest goes out now, command by command;
+     * with a reopen pending it stays held for VtHeldResume. */
+    while (vtHeldLen && !VtReopenPending()) {
+        UBYTE *held = vtHeld;
+        long n = vtHeldLen;
+
+        vtHeld = NULL;
+        vtHeldLen = 0;
+        VtFeedRip(held, n);
+        free(held);
+        VtRipWatch();
+    }
     VtParseEnd();
     VtTitleSync();
     TerminalMouseReport();          /* ?1002 / ?1003 may have changed */
+}
+
+static void VtWrite(const UBYTE *data, long len)
+{
+    VtWriteIn(data, len, TRUE);
+}
+
+/* The main loop, after a display reopen has finished: the remainder held when RIP
+ * turned active mid-chunk is drawn now, on the RIP screen, through VtWrite's own
+ * path (layers, cursor, title). Nothing held, or a reopen still queued: nothing. */
+static void VtHeldResume(void)
+{
+    if (vtTerm && vtHeldLen && !VtReopenPending())
+        VtWriteIn(NULL, 0, FALSE);
 }
 
 /* A prefix VtWrite held back is waiting to be drawn: the receive loop polls

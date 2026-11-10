@@ -432,6 +432,7 @@ BYTE dontUseSig31 = -1; // don't use it, ibmcon.device will destroy it.
 static BOOL  selDragging;
 static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h);     // below RequestDisplayReopen
 static void VtRipScreenChanged(const struct PrefsStruct *before);
+static BOOL VtReopenPending(void);         // below RequestDisplayReopen
 #include "vtbuiltin.c"
 
 static void ObtainWorkbenchPens(void);
@@ -1076,6 +1077,13 @@ static void RequestDisplayReopen(const struct PrefsStruct *before)
 static void VtRipScreenChanged(const struct PrefsStruct *before)
 {
     RequestDisplayReopen(before);
+}
+
+/* A display reopen is queued and has not run yet (main loop): vtbuiltin.c holds the
+ * rest of a RIP Auto chunk until it has, and VtHeldResume() feeds it after. */
+static BOOL VtReopenPending(void)
+{
+    return shouldRestart || shouldReopenConsole;
 }
 
 /* The default RIPscrip screen (D5, D12) when the site names none: a 1:1 mode of at
@@ -3286,6 +3294,7 @@ int main(int argc, char *argv[])
                 shouldReopenScreen = FALSE;
                 shouldReopenConsole = FALSE;    // the full reopen covered it
             }
+            VtHeldResume();     // RIP Auto: the rest of the chunk that turned RIP on, on the new screen
 
             // A disconnect that reopened the display: its notice again, unless
             // the reopen kept the text it was printed into.
@@ -3504,6 +3513,7 @@ static BOOL ReplayFeed(void)
  * VtDraw -> VtDrawImages -> VtImgWrite path, averaged over REPLAY_REDRAWS, in microseconds
  * (E-clock). 0 when the timer is not open or no picture is shown. */
 #define REPLAY_REDRAWS 10
+static ULONG replayBlitUs;              /* H2c: the OS blit calls' share of one redraw, us */
 static ULONG ReplayRedrawUs(void)
 {
     struct EClockVal a, b;
@@ -3512,10 +3522,14 @@ static ULONG ReplayRedrawUs(void)
 
     if (!tickOpen || !vtTerm || !vt_images(vtTerm))
         return 0;
+    vtImgBlitCounts = 0;
+    vtImgTime = TRUE;
     perSecond = ReadEClock(&a);
     for (i = 0; i < REPLAY_REDRAWS; i++)
         VtDraw(NULL, 0, 0, term_cols, term_rows);
     ReadEClock(&b);
+    vtImgTime = FALSE;
+    replayBlitUs = VtEClockUs(vtImgBlitCounts, REPLAY_REDRAWS, perSecond);
     if (vtImgRuns == runs0 || !perSecond)
         return 0;                       /* nothing was blitted: no number */
     {
@@ -3524,8 +3538,7 @@ static ULONG ReplayRedrawUs(void)
 
         if (hi)
             return 0xFFFFFFFFUL;
-        /* us = counts / N * 1000 / (perSecond / 1000); exact to 0.1 percent, no overflow below 4 s */
-        return ((lo / REPLAY_REDRAWS) * 1000UL) / (perSecond / 1000UL);
+        return VtEClockUs(lo, REPLAY_REDRAWS, perSecond);
     }
 }
 
@@ -3534,7 +3547,7 @@ static void ReplayReport(void)
     ULONG redrawUs = ReplayRedrawUs();
 
     Printf("replay: canvas=%lu blits=%lu feed_ticks=%lu\n", VtCanvasSum(), vtImgRuns, replayTicks);
-    Printf("replay: redraw_us=%lu redraw_n=%lu\n", redrawUs, (ULONG)REPLAY_REDRAWS);
+    Printf("replay: redraw_us=%lu blit_us=%lu redraw_n=%lu\n", redrawUs, replayBlitUs, (ULONG)REPLAY_REDRAWS);
     replayPending = FALSE;
 }
 
