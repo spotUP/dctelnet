@@ -1164,6 +1164,40 @@ static BOOL VtScrollKey(UWORD rawkey, BOOL shift)
     return TRUE;
 }
 
+/* Plan H2c: bytes into the engine. RIP not active: vt_write, one parse and one
+ * draw. RIP active: the bytes go in as slices that end at each '|' or LF (a split
+ * only sets the flush granularity; the engine's parser is stream-safe and stays the
+ * only one), and the drawing goes out whenever the engine finished a RIP command
+ * since the last flush, so a picture builds up command by command the way it did on
+ * the old machines. Each flush takes the layers for its drawing and gives them back
+ * (VtDrawPause), so a menu can still open between commands. The bytes after the
+ * last finished command are drawn by a last vt_flush, as vt_write would. */
+static void VtFeed(const UBYTE *data, long len)
+{
+    long done = vt_rip_commands(vtTerm);
+
+    if (!vt_rip_active(vtTerm)) {
+        vt_write(vtTerm, data, len);
+        return;
+    }
+    while (len > 0) {
+        const UBYTE *bar = memchr(data, '|', (size_t)len);
+        const UBYTE *lf = memchr(data, '\n', (size_t)len);
+        const UBYTE *end = bar && (!lf || bar < lf) ? bar : lf;
+        long n = end ? (long)(end - data) + 1 : len;
+
+        vt_feed(vtTerm, data, n);
+        data += n;
+        len -= n;
+        if (vt_rip_commands(vtTerm) != done) {
+            done = vt_rip_commands(vtTerm);
+            vt_flush(vtTerm);
+            VtDrawPause();
+        }
+    }
+    vt_flush(vtTerm);
+}
+
 /* Bytes from the BBS (or DCTelnet's own messages): parse, draw what
  * changed, put the cursor back. Drawing happens with the cursor hidden. */
 static void VtWrite(const UBYTE *data, long len)
@@ -1181,10 +1215,10 @@ static void VtWrite(const UBYTE *data, long len)
         if (Vt_Utf8SnifferFeed(&vtSniff, &prefs, data, len, pre, &npre, &ndata))
             vt_set_charset(vtTerm, VT_CS_UTF8);
         if (npre)
-            vt_write(vtTerm, pre, npre);
-        vt_write(vtTerm, data, ndata);
+            VtFeed(pre, npre);
+        VtFeed(data, ndata);
     } else
-        vt_write(vtTerm, data, len);
+        VtFeed(data, len);
     vtInWrite = FALSE;
     VtRipWatch();                   /* the one place RIP going active/inactive is noticed */
     VtParseEnd();

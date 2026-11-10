@@ -304,6 +304,9 @@ static int parses, parsedLocked, menuOnParse;
 static UBYTE atMenu[4][BPR * H];    /* the planes as the menu opened */
 static void probe_write(vt_term *t, const vt_u8 *buf, long len);
 #define vt_write(t, b, n) probe_write((t), (b), (n))
+static int flushes;                 /* engine draw batches: vt_write (feed + flush) and each vt_flush */
+static void probe_flush(vt_term *t);
+#define vt_flush(t) probe_flush((t))
 /* H4: DCTelnet.c's reopen hook and default-screen rule, as counting stubs. */
 static int ripReopens, ripDefaultAsked;
 static ULONG ripReopenDisplayID, ripReopenWas;
@@ -326,9 +329,16 @@ struct SiteHandChanges handChanges;     /* DCTelnet.c's record of temporary chan
 ULONG sessionSettingsId;                /* 0: a quick connect, no entry session */
 #include "../src/vtbuiltin.c"
 #undef vt_write
+#undef vt_flush
+static void probe_flush(vt_term *t)
+{
+    flushes++;
+    vt_flush(t);
+}
 static void probe_write(vt_term *t, const vt_u8 *buf, long len)
 {
     parses++;
+    flushes++;
     parsedLocked += layerLocks;
     if (menuOnParse) {
         screen.LayerInfo.top_layer = &menuLayer;
@@ -2158,6 +2168,39 @@ static void test_rip_h2c_a_flat_runs_go_out_as_rectfills_through_vtwrite(void)
     VtClose();
 }
 
+/* Plan H2c part B: with RIP active a write of several commands draws after each
+ * finished command, not once at the end; with RIP off one write is one draw. */
+static void test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite(void)
+{
+    static const char pic[] = "!|S0109|B0A0A2S2S\r\n!|S0102|B323264642S\r\n!|c0A\r\n";
+    int onFlushes;
+    long cmds;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[!");
+    parses = flushes = 0;
+    cmds = vt_rip_commands(vtTerm);
+    VtWrite((const UBYTE *)pic, (long)strlen(pic));
+    onFlushes = flushes;
+    assert(parses == 0);                            /* the sliced path, not vt_write */
+    assert(vt_rip_commands(vtTerm) - cmds >= 3);
+    assert(onFlushes >= 4);                         /* a flush per finished command, plus the last */
+    assert(layerLocks == 0);                        /* every flush gave the layers back */
+    VtClose();
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_OFF;
+    VtApplyRip();
+    parses = flushes = 0;
+    VtWrite((const UBYTE *)pic, (long)strlen(pic));
+    assert(parses == 1 && flushes == 1);            /* RIP off: unchanged, one draw */
+    VtClose();
+}
+
 /* The RIP switch is temporary for the run: in a quick connect (no entry
  * session) the live prefs are what SavePrefs writes, so what it would save
  * must still be the pre-RIP screen and renderer while RIP is active. */
@@ -2214,6 +2257,7 @@ int main(void)
     test_a_menu_opened_while_an_answer_is_sent_is_drawn_around();
     test_a_menu_opens_while_a_rip_picture_is_parsed();
     test_rip_h2c_a_flat_runs_go_out_as_rectfills_through_vtwrite();
+    test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite();
     test_ma1_2_line_art_lands_in_the_grid_and_reaches_the_glyph_writer();
     test_ma1_3_blocks_and_shades_map_to_themselves_never_to_the_fallback();
     test_ma1_1_latin1_byte_reaches_the_glyph_writer_unchanged();
