@@ -186,40 +186,107 @@ typedef struct {
     UBYTE pen;
 } VtImgFlat;
 
+/* One row of the picture through the pen map: dst[i] = map[src[i]], n >= 1.
+ * On the 68000 a C loop with LONG indices costs about 80 cycles a pixel (index
+ * widened and scaled, pointer re-derived); move.b (a1)+ / move.b (a0,d2.w),(a2)+ /
+ * dbf is 8 + 18 + 10 = 36. d2 and a2 are callee-saved, so the text saves them. */
+#if defined(__VBCC__) && defined(__M68K__)
+static void VtImgMapRow(__reg("a0") const UBYTE *map, __reg("a1") const vt_u8 *src,
+                        __reg("d1") UBYTE *dst, __reg("d0") UWORD n) =
+    "\tmovem.l\ta2/d2,-(sp)\n"
+    "\tmove.l\td1,a2\n"
+    "\tmoveq\t#0,d2\n"
+    "\tsubq.w\t#1,d0\n"
+    "\tmove.b\t(a1)+,d2\n"
+    "\tmove.b\t(a0,d2.w),(a2)+\n"
+    "\tdbf\td0,*-6\n"
+    "\tmovem.l\t(sp)+,a2/d2\n";
+#else
+static void VtImgMapRow(const UBYTE *map, const vt_u8 *src, UBYTE *dst, UWORD n)
+{
+    while (n--)
+        *dst++ = map[*src++];
+}
+#endif
+
 /* A row's runs of one pen >= VT_IMG_FLAT_MIN: a run that repeats the previous
- * row's (same x0, x1, pen) grows that rectangle taller. Returns the count in fl. */
+ * row's (same x0, x1, pen) grows that rectangle taller. Returns the count in fl.
+ * The run scan is a pointer walk (about 20 cycles a pixel); the previous rectangles
+ * are searched once per run, never per pixel. */
 static int VtImgFlats(VtImgFlat *fl, int n, const UBYTE *row, LONG w, int k)
 {
-    LONG a = 0, b;
+    const UBYTE *p = row, *end = row + w;
     int was = n;
 
-    while (a < w) {
-        for (b = a + 1; b < w && row[b] == row[a]; b++)
+    while (p < end) {
+        const UBYTE *q = p;
+        UBYTE pen = *p;
+        while (++q < end && *q == pen)
             ;
-        if (b - a >= VT_IMG_FLAT_MIN) {
+        if (q - p >= VT_IMG_FLAT_MIN) {
+            WORD a = (WORD)(p - row), x1 = (WORD)(q - row - 1);
             int m;
             for (m = 0; m < was; m++)
-                if (fl[m].y1 == k - 1 && fl[m].x0 == a && fl[m].x1 == b - 1 && fl[m].pen == row[a])
+                if (fl[m].y1 == k - 1 && fl[m].x0 == a && fl[m].x1 == x1 && fl[m].pen == pen)
                     break;
             if (m < was) {
                 fl[m].y1 = (BYTE)k;
             } else {
-                fl[n].x0 = (WORD)a; fl[n].x1 = (WORD)(b - 1);
+                fl[n].x0 = a; fl[n].x1 = x1;
                 fl[n].y0 = fl[n].y1 = (BYTE)k;
-                fl[n].pen = row[a];
+                fl[n].pen = pen;
                 n++;
             }
         }
-        a = b;
+        p = q;
     }
     return n;
+}
+
+/* Row k's mixed spans, the pixels the flat rectangles leave: sp gets [start, end)
+ * pairs, the count is returned. One pass over the n rectangles per row (the rows
+ * of a band are 8), the covering ones insertion-sorted by x0, then a cursor that
+ * only moves right; the old code rescanned all n rectangles for every pixel. */
+#define VT_IMG_SPANS_MAX (VT_IMG_W / VT_IMG_FLAT_MIN + 2)
+static int VtImgSpans(const VtImgFlat *fl, int n, int k, LONG w, WORD *sp)
+{
+    WORD cx0[VT_IMG_W / VT_IMG_FLAT_MIN + 1], cx1[VT_IMG_W / VT_IMG_FLAT_MIN + 1];
+    int nc = 0, i, j, ns = 0;
+    WORD x = 0;
+
+    for (i = 0; i < n; i++) {
+        if (fl[i].y0 <= k && k <= fl[i].y1) {
+            WORD a = fl[i].x0, b = fl[i].x1;
+            for (j = nc; j > 0 && cx0[j - 1] > a; j--) {
+                cx0[j] = cx0[j - 1];
+                cx1[j] = cx1[j - 1];
+            }
+            cx0[j] = a;
+            cx1[j] = b;
+            nc++;
+        }
+    }
+    for (i = 0; i < nc; i++) {
+        if (cx0[i] > x) {
+            sp[2 * ns] = x;
+            sp[2 * ns + 1] = cx0[i];
+            ns++;
+        }
+        x = cx1[i] + 1;
+    }
+    if (x < w) {
+        sp[2 * ns] = x;
+        sp[2 * ns + 1] = (WORD)w;
+        ns++;
+    }
+    return ns;
 }
 
 /* w x h pixels of v from (sx, sy) to RastPort pixel (dx, dy). */
 static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h, WORD dx, WORD dy)
 {
     LONG stride = (w + 15) & ~15L;      /* WritePixelArray8 wants rows of 16 */
-    LONG k, j;
+    LONG k;
     static VtImgFlat flat[8 * (VT_IMG_W / VT_IMG_FLAT_MIN)];
     int nflat = 0, i;
     struct EClockVal ea, eb;
@@ -231,12 +298,15 @@ static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h,
     if (stride > VT_IMG_W || h > 8 || !rp)
         return;
     VtImgColours(v);
-    for (k = 0; k < h; k++) {
-        const vt_u8 *src = v->pix + (sy + k) * v->w + sx;
-        UBYTE *d = vtImgBuf + k * stride;
-        for (j = 0; j < w; j++)
-            d[j] = vtImgMap[src[j]];
-        nflat = VtImgFlats(flat, nflat, d, w, (int)k);
+    {   /* row pointers advance by addition: no per-row multiply (about 200 cycles each) */
+        const vt_u8 *src = v->pix + sy * v->w + sx;
+        UBYTE *d = vtImgBuf;
+        for (k = 0; k < h; k++) {
+            VtImgMapRow(vtImgMap, src, d, (UWORD)w);
+            nflat = VtImgFlats(flat, nflat, d, w, (int)k);
+            src += v->w;
+            d += stride;
+        }
     }
     vtImgRuns++;
     term_blit_sync();                   /* the glyph blits are done with the planes */
@@ -257,31 +327,11 @@ static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h,
         SetDrMd(rp, oldMode);
         /* the mixed spans between the flat runs, row by row */
         for (k = 0; k < h; k++) {
+            WORD sp[2 * VT_IMG_SPANS_MAX];
             const UBYTE *row = vtImgBuf + k * stride;
-            LONG x = 0;
-            while (x < w) {
-                LONG e = x;
-                BOOL isFlat = FALSE;
-                for (i = 0; i < nflat; i++)
-                    if (flat[i].y0 <= k && k <= flat[i].y1 && flat[i].x0 == x) {
-                        e = flat[i].x1 + 1;
-                        isFlat = TRUE;
-                        break;
-                    }
-                if (isFlat) {
-                    x = e;
-                    continue;
-                }
-                for (e = x; e < w; e++) {   /* up to the next flat rectangle's start on this row */
-                    for (i = 0; i < nflat; i++)
-                        if (flat[i].y0 <= k && k <= flat[i].y1 && flat[i].x0 == e)
-                            break;
-                    if (i < nflat)
-                        break;
-                }
-                VtImgBlit(rp, dx + x, dy + k, e - x, 1, row + x, stride);
-                x = e;
-            }
+            int ns = VtImgSpans(flat, nflat, (int)k, w, sp);
+            for (i = 0; i < ns; i++)
+                VtImgBlit(rp, dx + sp[2 * i], dy + k, sp[2 * i + 1] - sp[2 * i], 1, row + sp[2 * i], stride);
         }
     }
     if (vtImgTime) {

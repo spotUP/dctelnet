@@ -2189,6 +2189,137 @@ static void test_rip_h2c_a_flat_runs_go_out_as_rectfills_through_vtwrite(void)
     VtClose();
 }
 
+/* Plan H2c: the optimised pen-map / flat-run / mixed-span path against the
+ * original per-pixel algorithm, kept here as the reference. */
+static int ref_flats(VtImgFlat *fl, int n, const UBYTE *row, LONG w, int k)
+{
+    LONG a = 0, b;
+    int was = n;
+
+    while (a < w) {
+        for (b = a + 1; b < w && row[b] == row[a]; b++)
+            ;
+        if (b - a >= VT_IMG_FLAT_MIN) {
+            int m;
+            for (m = 0; m < was; m++)
+                if (fl[m].y1 == k - 1 && fl[m].x0 == a && fl[m].x1 == b - 1 && fl[m].pen == row[a])
+                    break;
+            if (m < was) {
+                fl[m].y1 = (BYTE)k;
+            } else {
+                fl[n].x0 = (WORD)a; fl[n].x1 = (WORD)(b - 1);
+                fl[n].y0 = fl[n].y1 = (BYTE)k;
+                fl[n].pen = row[a];
+                n++;
+            }
+        }
+        a = b;
+    }
+    return n;
+}
+
+static int ref_spans(const VtImgFlat *flat, int nflat, int k, LONG w, WORD *sp)
+{
+    LONG x = 0;
+    int i, ns = 0;
+
+    while (x < w) {
+        LONG e = x;
+        int isFlat = 0;
+        for (i = 0; i < nflat; i++)
+            if (flat[i].y0 <= k && k <= flat[i].y1 && flat[i].x0 == x) {
+                e = flat[i].x1 + 1;
+                isFlat = 1;
+                break;
+            }
+        if (isFlat) {
+            x = e;
+            continue;
+        }
+        for (e = x; e < w; e++) {
+            for (i = 0; i < nflat; i++)
+                if (flat[i].y0 <= k && k <= flat[i].y1 && flat[i].x0 == e)
+                    break;
+            if (i < nflat)
+                break;
+        }
+        sp[2 * ns] = (WORD)x;
+        sp[2 * ns + 1] = (WORD)e;
+        ns++;
+        x = e;
+    }
+    return ns;
+}
+
+/* h rows of w pixels laid out by runs[]: lengths of alternating pens, repeated per row
+ * (rowkind 0), or shifted by one pixel on odd rows (rowkind 1) so rectangles do not grow. */
+static void h2c_equiv_case(const char *name, LONG w, int h, const int *runs, int nruns, int rowkind, unsigned seed)
+{
+    static UBYTE src[8 * 1280], mapped[8 * 1280], refbuf[8 * 1280];
+    static UBYTE map[256];
+    static VtImgFlat f1[8 * (VT_IMG_W / VT_IMG_FLAT_MIN)], f2[8 * (VT_IMG_W / VT_IMG_FLAT_MIN)];
+    int n1 = 0, n2 = 0, k, i, r;
+    LONG stride = (w + 15) & ~15L;
+
+    (void)name;
+    for (i = 0; i < 256; i++)
+        map[i] = (UBYTE)(255 - i);
+    for (k = 0; k < h; k++) {
+        LONG x = 0;
+        int pen = (int)(seed & 7);
+        for (r = 0; x < w; r++) {
+            int len = runs[r % nruns];
+            if (rowkind == 1 && (k & 1) && r == 0)
+                len++;
+            while (len-- > 0 && x < w)
+                src[k * stride + x++] = (UBYTE)pen;
+            pen = (pen + 1 + (int)(seed >> 3 & 1)) & 7;
+        }
+    }
+    for (k = 0; k < h; k++) {
+        VtImgMapRow(map, src + k * stride, mapped + k * stride, (UWORD)w);
+        for (i = 0; i < w; i++)
+            refbuf[k * stride + i] = map[src[k * stride + i]];
+        assert(memcmp(mapped + k * stride, refbuf + k * stride, (size_t)w) == 0);
+        n1 = VtImgFlats(f1, n1, mapped + k * stride, w, k);
+        n2 = ref_flats(f2, n2, refbuf + k * stride, w, k);
+    }
+    assert(n1 == n2);
+    assert(memcmp(f1, f2, (size_t)n1 * sizeof f1[0]) == 0);
+    for (k = 0; k < h; k++) {
+        WORD s1[2 * VT_IMG_SPANS_MAX], s2[2 * VT_IMG_SPANS_MAX];
+        int a = VtImgSpans(f1, n1, k, w, s1), b = ref_spans(f2, n2, k, w, s2);
+        assert(a == b);
+        assert(memcmp(s1, s2, (size_t)a * 2 * sizeof s1[0]) == 0);
+    }
+}
+
+static void test_rip_h2c_spans_new_path_equals_the_old_algorithm(void)
+{
+    int none[] = {1, 2, 3, 5, 7};
+    int one[] = {1280};
+    int mn1[] = {VT_IMG_FLAT_MIN - 1};
+    int mn[] = {VT_IMG_FLAT_MIN};
+    int mixed[] = {3, VT_IMG_FLAT_MIN, 5, VT_IMG_FLAT_MIN + 7, 1, VT_IMG_FLAT_MIN - 1};
+    int edge[] = {VT_IMG_FLAT_MIN, 4, VT_IMG_FLAT_MIN};
+    int tail[] = {2, VT_IMG_FLAT_MIN};
+    LONG ws[] = {1, 8, 31, 32, 33, 64, 100, 640, 1280};
+    unsigned i;
+    int h;
+
+    for (i = 0; i < sizeof ws / sizeof ws[0]; i++)
+        for (h = 1; h <= 8; h += 7) {
+            h2c_equiv_case("none", ws[i], h, none, 5, 0, 0);
+            h2c_equiv_case("all flat", ws[i], h, one, 1, 0, 1);
+            h2c_equiv_case("min-1", ws[i], h, mn1, 1, 0, 2);
+            h2c_equiv_case("min", ws[i], h, mn, 1, 0, 3);
+            h2c_equiv_case("mixed", ws[i], h, mixed, 6, 0, 4);
+            h2c_equiv_case("mixed shifted", ws[i], h, mixed, 6, 1, 9);
+            h2c_equiv_case("edges", ws[i], h, edge, 3, 0, 5);
+            h2c_equiv_case("tail", ws[i], h, tail, 2, 1, 6);
+        }
+}
+
 /* Plan H2c part B: with RIP active a write of several commands draws after each
  * finished command, not once at the end; with RIP off one write is one draw. */
 static void test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite(void)
@@ -2405,6 +2536,7 @@ int main(void)
     test_a_menu_opened_while_an_answer_is_sent_is_drawn_around();
     test_a_menu_opens_while_a_rip_picture_is_parsed();
     test_rip_h2c_a_flat_runs_go_out_as_rectfills_through_vtwrite();
+    test_rip_h2c_spans_new_path_equals_the_old_algorithm();
     test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite();
     test_rip_h2c_c_auto_chunk_rest_is_drawn_per_command_after_the_reopen();
     test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_asked();
