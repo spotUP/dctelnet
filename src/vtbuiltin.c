@@ -295,7 +295,8 @@ static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h,
 
     struct RastPort *rp = VtImgRp();
 
-    if (stride > VT_IMG_W || h > 8 || !rp)
+    /* w < 1 must return here: VtImgMapRow's dbf loop would run 65536 times for 0 */
+    if (w < 1 || h < 1 || stride > VT_IMG_W || h > 8 || !rp)
         return;
     VtImgColours(v);
     {   /* row pointers advance by addition: no per-row multiply (about 200 cycles each) */
