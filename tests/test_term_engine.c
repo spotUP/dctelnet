@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <exec/types.h>
 #include "prefs.h"
@@ -300,13 +301,15 @@ static vt_term *probe_new(int cols, int rows, int sb, const vt_callbacks *cb, vo
 /* RMB-FREEZE-RIG2: the engine's parse of a write (a RIP picture rasterises
  * for seconds on an A500), seen from outside: how often it ran with the
  * screen's LayerInfo held, and a menu that opens meanwhile (menuOnParse). */
-static int parses, parsedLocked, menuOnParse;
+static int parses, feeds, parsedLocked, menuOnParse;
 static UBYTE atMenu[4][BPR * H];    /* the planes as the menu opened */
 static void probe_write(vt_term *t, const vt_u8 *buf, long len);
 #define vt_write(t, b, n) probe_write((t), (b), (n))
 static int flushes;                 /* engine draw batches: vt_write (feed + flush) and each vt_flush */
 static void probe_flush(vt_term *t);
 #define vt_flush(t) probe_flush((t))
+static void probe_feed(vt_term *t, const vt_u8 *buf, long len);
+#define vt_feed(t, b, n) probe_feed((t), (b), (n))   /* RIP Auto and active slices parse through vt_feed */
 /* H4: DCTelnet.c's reopen hook and default-screen rule, as counting stubs. */
 static int ripReopens, ripDefaultAsked;
 static ULONG ripReopenDisplayID, ripReopenWas;
@@ -317,9 +320,16 @@ static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h)
     *id = 0x91000UL; *w = 640; *h = 400;
     return FALSE;
 }
+static BOOL ripQueueReopen, ripReopenQueued;   /* a reopen is queued till the test "completes" it */
+static BOOL VtReopenPending(void)
+{
+    return ripReopenQueued;
+}
 static void VtRipScreenChanged(const struct PrefsStruct *before)
 {
     ripReopens++;
+    if (ripQueueReopen)
+        ripReopenQueued = TRUE;
     ripReopenWas = before->DisplayID;
     ripReopenDisplayID = prefs.DisplayID;
     ripReopenRenderer = prefs.State & APP_RENDERER_ALL;
@@ -330,21 +340,32 @@ ULONG sessionSettingsId;                /* 0: a quick connect, no entry session 
 #include "../src/vtbuiltin.c"
 #undef vt_write
 #undef vt_flush
+#undef vt_feed
 static void probe_flush(vt_term *t)
 {
     flushes++;
     vt_flush(t);
 }
-static void probe_write(vt_term *t, const vt_u8 *buf, long len)
+static void probe_parse_hook(void)
 {
-    parses++;
-    flushes++;
     parsedLocked += layerLocks;
     if (menuOnParse) {
         screen.LayerInfo.top_layer = &menuLayer;
         memcpy(atMenu, planes, sizeof(atMenu));
     }
+}
+static void probe_write(vt_term *t, const vt_u8 *buf, long len)
+{
+    parses++;
+    flushes++;
+    probe_parse_hook();
     vt_write(t, buf, len);
+}
+static void probe_feed(vt_term *t, const vt_u8 *buf, long len)
+{
+    feeds++;
+    probe_parse_hook();
+    vt_feed(t, buf, len);
 }
 #undef term_glyph
 #undef vt_new
@@ -653,9 +674,9 @@ static void test_a_menu_opens_while_a_rip_picture_is_parsed(void)
 {
     setup();
     assert(VtOpen() == 0);
-    parses = parsedLocked = bltUnlocked = 0;     /* (term_init_area's clear) */
+    parses = feeds = parsedLocked = bltUnlocked = 0;     /* (term_init_area's clear) */
     vt_write_str("Hello");
-    assert(parses > 0 && parsedLocked == 0);    /* parsed with the layers free */
+    assert(parses + feeds > 0 && parsedLocked == 0);    /* parsed (vt_write or sliced vt_feed) with the layers free */
     assert(calls[0] == 0 && bltUnlocked == 0);  /* drawn into the bitmap, held */
     assert(planes[0][TOP * BPR] == 'H');
     assert(layerLocks == 0);
@@ -2201,6 +2222,133 @@ static void test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite(void
     VtClose();
 }
 
+/* The reference: the same bytes in Auto through one engine vt_write (the path before
+ * part C). Bare `!|` activation, so it differs from the On + ESC[! sum of part A. */
+static unsigned long rip_auto_oneshot_sum(void)
+{
+    static UBYTE buf[512];
+    unsigned long sum;
+    FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
+    size_t n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO; prefs.RipScreen = RIPSCREEN_FIT;
+    VtApplyRip();
+    vt_write(vtTerm, buf, (long)n);
+    sum = (unsigned long)VtCanvasSum();
+    VtClose();
+    return sum;
+}
+/* Plan H2c part C: RIP Auto, and the first chunk holds the `!|` line that turns RIP
+ * on. The rest of that chunk is drawn command by command, on the RIP screen: held
+ * while the screen reopen runs (VtHeldResume, the main loop's call after it), at
+ * once when the screen is kept. The fixture is vtcon's 07-buttons.rip in ONE
+ * VtWrite; the sum is its one-shot canvas. vtHeldLen is the sentinel that the hold
+ * ran, flushes the per-command drawing. */
+static void rip_auto_chunk(BOOL reopen, int *flushesAfter, int *heldAfterWrite)
+{
+    static UBYTE buf[512];
+    FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
+    size_t n;
+
+    assert(f);
+    n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    assert(n > 0 && n < sizeof buf);
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO;
+    prefs.RipScreen = RIPSCREEN_FIT;
+    VtApplyRip();
+    assert(!vt_rip_active(vtTerm));
+    ripQueueReopen = reopen;
+    ripReopenQueued = FALSE;
+    parses = flushes = 0;
+    VtWrite(buf, (long)n);
+    *heldAfterWrite = (int)vtHeldLen;
+    if (reopen) {
+        assert(ripReopenQueued);                        /* the screen switch asked for a reopen */
+        assert(vtHeldLen > 0);                          /* the rest waits for it */
+        assert(vt_rip_commands(vtTerm) < 20);           /* and is not parsed yet */
+        VtWrite((const UBYTE *)"", 0);                  /* (empty data while held: no effect) */
+        ripReopenQueued = FALSE;                        /* the main loop's reopen finished ... */
+        VtHeldResume();                                 /* ... and resumes, as DCTelnet.c does */
+    }
+    *flushesAfter = flushes;
+    ripQueueReopen = FALSE;
+    assert(vt_rip_active(vtTerm) == 1);
+    assert(vt_rip_commands(vtTerm) > 0);                /* the sentinel: the parser ran */
+    assert(vtHeldLen == 0 && vtHeld == NULL);           /* nothing held at the end */
+    assert(layerLocks == 0);
+    assert((unsigned long)VtCanvasSum() == 2553612577UL);   /* the one-shot Auto canvas */
+    {
+        int keep = parses;
+
+        assert((unsigned long)VtCanvasSum() == rip_auto_oneshot_sum());   /* measured, not just remembered */
+        parses = keep;                                  /* (the reference used vt_write) */
+    }
+}
+
+static void test_rip_h2c_c_auto_chunk_rest_is_drawn_per_command_after_the_reopen(void)
+{
+    int fl, held;
+
+    rip_auto_chunk(TRUE, &fl, &held);
+    assert(held > 0);
+    assert(parses == 0);                                /* sliced path throughout, never vt_write */
+    assert(fl >= 4);                                    /* a flush per finished command after activation */
+    VtClose();
+}
+
+static void test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_asked(void)
+{
+    int fl, held;
+
+    rip_auto_chunk(FALSE, &fl, &held);
+    assert(held == 0);                                  /* fed inside the same VtWrite */
+    assert(parses == 0);
+    assert(fl >= 4);
+    VtClose();
+}
+
+/* Bytes that arrive while the rest is held go behind it; text before the `!|` line
+ * is drawn as it always was. */
+static void test_rip_h2c_c_text_before_the_bar_line_and_bytes_behind_the_hold(void)
+{
+    static const char pic[] = "hello\r\nworld\r\n!|S0109|B0A0A2S2S\r\n!|c0A\r\n";
+    static const char more[] = "!|B323264642S\r\n";
+    const vt_cell *row;
+    int nc;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO;
+    prefs.RipScreen = RIPSCREEN_FIT;
+    VtApplyRip();
+    ripQueueReopen = TRUE;
+    ripReopenQueued = FALSE;
+    VtWrite((const UBYTE *)pic, (long)strlen(pic));
+    row = vt_row(vtTerm, 0, &nc);
+    assert(row[0].ch == 'h' && row[4].ch == 'o');       /* text before the `!|` line: drawn, unchanged */
+    row = vt_row(vtTerm, 1, &nc);
+    assert(row[0].ch == 'w');
+    assert(vt_rip_active(vtTerm) && vtHeldLen > 0);
+    {
+        long was = vtHeldLen;
+
+        VtWrite((const UBYTE *)more, (long)strlen(more));       /* arrives while held */
+        assert(vtHeldLen == was + (long)strlen(more));
+        assert(memcmp(vtHeld + was, more, strlen(more)) == 0);  /* behind it */
+    }
+    ripReopenQueued = FALSE;
+    ripQueueReopen = FALSE;
+    VtHeldResume();
+    assert(vtHeldLen == 0 && vtHeld == NULL);
+    VtClose();
+}
+
 /* The RIP switch is temporary for the run: in a quick connect (no entry
  * session) the live prefs are what SavePrefs writes, so what it would save
  * must still be the pre-RIP screen and renderer while RIP is active. */
@@ -2258,6 +2406,9 @@ int main(void)
     test_a_menu_opens_while_a_rip_picture_is_parsed();
     test_rip_h2c_a_flat_runs_go_out_as_rectfills_through_vtwrite();
     test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite();
+    test_rip_h2c_c_auto_chunk_rest_is_drawn_per_command_after_the_reopen();
+    test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_asked();
+    test_rip_h2c_c_text_before_the_bar_line_and_bytes_behind_the_hold();
     test_ma1_2_line_art_lands_in_the_grid_and_reaches_the_glyph_writer();
     test_ma1_3_blocks_and_shades_map_to_themselves_never_to_the_fallback();
     test_ma1_1_latin1_byte_reaches_the_glyph_writer_unchanged();

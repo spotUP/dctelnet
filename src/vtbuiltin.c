@@ -776,9 +776,41 @@ static void VtRipWatch(void)
     VtRipScreenChanged(&before);
 }
 
+/* RIP Auto, plan H2c part C: a chunk in which RIP turns active halfway has its
+ * rest drawn command by command on the RIP screen, not in the one flush the
+ * plain-text path would make. The rest waits here while the screen reopens that
+ * VtRipWatch asked for (DCTelnet.c: shouldRestart / shouldReopenConsole), and is
+ * fed by VtHeldResume() once the new display is open. Bytes that arrive meanwhile
+ * go behind it, so the order never changes. Heap, owned here; freed when the
+ * remainder is fed, on a new connection (VtSniffReset), a settings end (VtRipEnd)
+ * and with the terminal (VtClose). */
+static UBYTE *vtHeld;
+static long vtHeldLen;
+
+static void VtHeldFree(void)
+{
+    free(vtHeld);
+    vtHeld = NULL;
+    vtHeldLen = 0;
+}
+
+/* Append behind what is held; FALSE (nothing appended) when memory is short. */
+static BOOL VtHeldAppend(const UBYTE *data, long len)
+{
+    UBYTE *grown = (UBYTE *)realloc(vtHeld, (size_t)(vtHeldLen + len));
+
+    if (!grown)
+        return FALSE;
+    memcpy(grown + vtHeldLen, data, (size_t)len);
+    vtHeld = grown;
+    vtHeldLen += len;
+    return TRUE;
+}
+
 /* The session ended (or its settings did): a RIP switch still in force is undone. */
 static void VtRipEnd(void)
 {
+    VtHeldFree();
     if (vtRipSeen && vtTerm)
     {
         vt_set_rip(vtTerm, 0);          /* inactive: VtRipWatch puts the screen back */
@@ -800,6 +832,7 @@ static void VtSetDownloadHost(const char *host)
 
 static void VtSniffReset(void)
 {
+    VtHeldFree();
     Vt_Utf8SnifferReset(&vtSniff);
 }
 
@@ -1094,6 +1127,7 @@ static void VtReleasePens(void)
 /* The engine and its cells go: quitting, or another renderer. */
 static void VtClose(void)
 {
+    VtHeldFree();
     VtReleasePens();
     if (vtTerm) {
         vt_free(vtTerm);
@@ -1172,14 +1206,10 @@ static BOOL VtScrollKey(UWORD rawkey, BOOL shift)
  * the old machines. Each flush takes the layers for its drawing and gives them back
  * (VtDrawPause), so a menu can still open between commands. The bytes after the
  * last finished command are drawn by a last vt_flush, as vt_write would. */
-static void VtFeed(const UBYTE *data, long len)
+static void VtFeedRip(const UBYTE *data, long len)
 {
     long done = vt_rip_commands(vtTerm);
 
-    if (!vt_rip_active(vtTerm)) {
-        vt_write(vtTerm, data, len);
-        return;
-    }
     while (len > 0) {
         const UBYTE *bar = memchr(data, '|', (size_t)len);
         const UBYTE *lf = memchr(data, '\n', (size_t)len);
@@ -1198,9 +1228,56 @@ static void VtFeed(const UBYTE *data, long len)
     vt_flush(vtTerm);
 }
 
+/* The bytes of one VtWrite, after the UTF-8 sniffer. Plan H2c part C: in RIP Auto
+ * with RIP not yet active the chunk goes in as slices that end at each LF, and
+ * when a slice turns RIP active the rest is held (vtHeld) for VtWriteIn to feed
+ * through VtFeedRip once the RIP screen is up. Off and On, and Auto already
+ * active, are as before. */
+static void VtFeed(const UBYTE *data, long len)
+{
+    if (len <= 0)
+        return;
+    if (vtHeldLen) {                    /* behind what waits: byte order never changes */
+        if (VtHeldAppend(data, len))
+            return;
+        while (vtHeldLen) {             /* no memory: the held bytes go first, then these */
+            UBYTE *held = vtHeld;
+            long n = vtHeldLen;
+
+            vtHeld = NULL;
+            vtHeldLen = 0;
+            VtFeedRip(held, n);
+            free(held);
+        }
+    }
+    if (vt_rip_active(vtTerm)) {
+        VtFeedRip(data, len);
+        return;
+    }
+    if (Prefs_RipEngineMode(&prefs) != 2) {
+        vt_write(vtTerm, data, len);
+        return;
+    }
+    while (len > 0) {
+        const UBYTE *lf = memchr(data, '\n', (size_t)len);
+        long n = lf ? (long)(lf - data) + 1 : len;
+
+        vt_feed(vtTerm, data, n);
+        data += n;
+        len -= n;
+        if (len > 0 && vt_rip_active(vtTerm)) {
+            vt_flush(vtTerm);
+            if (!VtHeldAppend(data, len))
+                VtFeedRip(data, len);   /* no memory: the rest goes out now, unheld */
+            return;
+        }
+    }
+    vt_flush(vtTerm);
+}
+
 /* Bytes from the BBS (or DCTelnet's own messages): parse, draw what
  * changed, put the cursor back. Drawing happens with the cursor hidden. */
-static void VtWrite(const UBYTE *data, long len)
+static void VtWriteIn(const UBYTE *data, long len, BOOL sniff)
 {
     if (vtScrollOff)
         VtScrollView(-vtScrollOff);     /* new output: back to the live grid */
@@ -1208,7 +1285,7 @@ static void VtWrite(const UBYTE *data, long len)
     /* Unix host, Character Set not UTF-8: the first valid UTF-8 sequence moves
      * the engine to UTF-8 for the rest of the connection; prefs stay as they are.
      * A trailing incomplete prefix is held back until the next write decides it. */
-    if (Vt_Utf8SnifferActive(&prefs) || vtSniff.nheld) {
+    if (sniff && (Vt_Utf8SnifferActive(&prefs) || vtSniff.nheld)) {
         UBYTE pre[3];
         long npre, ndata;
 
@@ -1221,9 +1298,36 @@ static void VtWrite(const UBYTE *data, long len)
         VtFeed(data, len);
     vtInWrite = FALSE;
     VtRipWatch();                   /* the one place RIP going active/inactive is noticed */
+    /* RIP Auto went active halfway through the chunk: when no screen reopen was asked
+     * for (RIPSCREEN_FIT keeps the screen) the rest goes out now, command by command;
+     * with a reopen pending it stays held for VtHeldResume. */
+    while (vtHeldLen && !VtReopenPending()) {
+        UBYTE *held = vtHeld;
+        long n = vtHeldLen;
+
+        vtHeld = NULL;
+        vtHeldLen = 0;
+        VtFeedRip(held, n);
+        free(held);
+        VtRipWatch();
+    }
     VtParseEnd();
     VtTitleSync();
     TerminalMouseReport();          /* ?1002 / ?1003 may have changed */
+}
+
+static void VtWrite(const UBYTE *data, long len)
+{
+    VtWriteIn(data, len, TRUE);
+}
+
+/* The main loop, after a display reopen has finished: the remainder held when RIP
+ * turned active mid-chunk is drawn now, on the RIP screen, through VtWrite's own
+ * path (layers, cursor, title). Nothing held, or a reopen still queued: nothing. */
+static void VtHeldResume(void)
+{
+    if (vtTerm && vtHeldLen && !VtReopenPending())
+        VtWriteIn(NULL, 0, FALSE);
 }
 
 /* A prefix VtWrite held back is waiting to be drawn: the receive loop polls

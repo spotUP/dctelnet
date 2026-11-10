@@ -432,6 +432,7 @@ BYTE dontUseSig31 = -1; // don't use it, ibmcon.device will destroy it.
 static BOOL  selDragging;
 static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h);     // below RequestDisplayReopen
 static void VtRipScreenChanged(const struct PrefsStruct *before);
+static BOOL VtReopenPending(void);         // below RequestDisplayReopen
 #include "vtbuiltin.c"
 
 static void ObtainWorkbenchPens(void);
@@ -1076,6 +1077,13 @@ static void RequestDisplayReopen(const struct PrefsStruct *before)
 static void VtRipScreenChanged(const struct PrefsStruct *before)
 {
     RequestDisplayReopen(before);
+}
+
+/* A display reopen is queued and has not run yet (main loop): vtbuiltin.c holds the
+ * rest of a RIP Auto chunk until it has, and VtHeldResume() feeds it after. */
+static BOOL VtReopenPending(void)
+{
+    return shouldRestart || shouldReopenConsole;
 }
 
 /* The default RIPscrip screen (D5, D12) when the site names none: a 1:1 mode of at
@@ -3286,6 +3294,7 @@ int main(int argc, char *argv[])
                 shouldReopenScreen = FALSE;
                 shouldReopenConsole = FALSE;    // the full reopen covered it
             }
+            VtHeldResume();     // RIP Auto: the rest of the chunk that turned RIP on, on the new screen
 
             // A disconnect that reopened the display: its notice again, unless
             // the reopen kept the text it was printed into.
