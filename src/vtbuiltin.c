@@ -186,6 +186,7 @@ static struct RastPort *VtImgRp(void)
 #define VT_PIC_SLOTS 4
 struct VtPic {
     long serial;                        /* the picture this slot was made for; 0 free */
+    long key;                           /* what the slot matches on: the serial, a RIP canvas's palette hash (VtImgKey) */
     unsigned long stamp;                /* last use, for the least recently used */
     UBYTE held[PM_MAXPENS];             /* the pens obtained for the picture (to release) */
     int nheld;
@@ -211,6 +212,7 @@ static void VtPicRelease(struct VtPic *s)
         ReleasePen(scr->ViewPort.ColorMap, (ULONG)s->held[i]);
     s->nheld = 0;
     s->serial = 0;
+    s->key = 0;
     if (s->mem) {
         FreeVec(s->mem);
         s->mem = NULL;
@@ -257,6 +259,29 @@ static unsigned long VtAnsiRgb(int n)
 
     return ((unsigned long)((c >> 8) & 15) * 17UL << 16) | ((unsigned long)((c >> 4) & 15) * 17UL << 8) |
            (unsigned long)(c & 15) * 17UL;
+}
+
+#define VT_RIP_NPAL 16                  /* a RIP canvas: 16 palette entries, index 0 a real colour, z -1 */
+
+/* A RIP canvas (not a sixel or a kitty picture). */
+static BOOL VtIsRipCanvas(const vt_image_view *v)
+{
+    return !v->kitty && !v->bg0 && v->fmt == 0 && v->z < 0 && v->npal == VT_RIP_NPAL;
+}
+
+/* What a picture's pens are made for. A RIP canvas gets a new serial with every command (the image changes under
+ * the same palette), so its key is the palette: pens are picked again only when the 16 colours change. Anything
+ * else: the serial. */
+static long VtImgKey(const vt_image_view *v)
+{
+    unsigned long h = 2166136261UL;
+    int i;
+
+    if (!VtIsRipCanvas(v))
+        return v->serial;
+    for (i = 0; i < VT_RIP_NPAL; i++)
+        h = (h ^ (v->pal[i] & 0xFFFFFFUL)) * 16777619UL;
+    return (long)((h & 0x3FFFFFFFUL) | 0x40000000UL);     /* clear of the small serials */
 }
 
 static BOOL VtPicMake(struct VtPic *s, const vt_image_view *v)
@@ -340,6 +365,7 @@ static BOOL VtPicMake(struct VtPic *s, const vt_image_view *v)
             plan3[i * 3 + 2] = PP_UNSET;
     }
     s->serial = v->serial;
+    s->key = VtImgKey(v);
     return TRUE;
 }
 
@@ -347,13 +373,15 @@ static BOOL VtPicMake(struct VtPic *s, const vt_image_view *v)
 static struct VtPic *VtPicSlot(const vt_image_view *v)
 {
     int i, old = 0;
+    long key = VtImgKey(v);
 
     for (i = 0; i < VT_PIC_SLOTS; i++) {
-        if (vtPic[i].serial == v->serial) {
+        if (vtPic[i].key == key) {
+            vtPic[i].serial = v->serial;        /* the same pens, the picture that has them now (VtPicSweep) */
             vtPic[i].stamp = ++vtPicUse;
             return &vtPic[i];
         }
-        if (vtPic[i].serial == 0 || vtPic[i].stamp < vtPic[old].stamp)
+        if (vtPic[i].key == 0 || vtPic[i].stamp < vtPic[old].stamp)
             old = i;
     }
     VtPicRelease(&vtPic[old]);
@@ -369,7 +397,12 @@ static BOOL VtSixNeedsPicker(const vt_image_view *v)
 {
     int i, used = 0, np = v->npal < PP_MAXCOL ? v->npal : PP_MAXCOL;
 
-    pp_weights(v->pix, (long)v->w * v->h, np, vtPicWt);
+    if (VtIsRipCanvas(v)) {             /* its pens are keyed on the palette (VtImgKey), so the weights come from it too */
+        vtPicWt[0] = 0;
+        for (i = 1; i < np; i++)
+            vtPicWt[i] = 1;
+    } else
+        pp_weights(v->pix, (long)v->w * v->h, np, vtPicWt);
     for (i = 1; i < np; i++)
         used += vtPicWt[i] != 0;
     return (unsigned long)used + vtTcN > vtPicFree;
@@ -378,10 +411,11 @@ static BOOL VtSixNeedsPicker(const vt_image_view *v)
 static void VtImgColours(const vt_image_view *v)
 {
     int i;
+    long key = VtImgKey(v);
 
-    if (vtImgSerial == v->serial)
+    if (vtImgSerial == key)
         return;
-    vtImgSerial = v->serial;
+    vtImgSerial = key;
     /* A sixel's index 0 is its unset pixels (the default background); a RIP
      * canvas or a kitty picture reads it as a palette colour. */
     vtImgMap[0] = (!v->kitty && !v->bg0) ? term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v->pal[0] & 0xFFFFFFUL)))]
@@ -677,6 +711,34 @@ static void VtImgUnderText(const vt_cell *c, int a, int b, int y)
     SetDrMd(rp, JAM2);
 }
 
+/* The canvas area a RIP command changed (vt_rip_take_dirty), in canvas pixels, x1 and y1 exclusive: while
+ * vtRipClipOn, the blit of a RIP canvas covers only the cells that area touches. Set by VtRipFlush around the
+ * draw of one command; every other draw (cursor, menu, resize, redraw) is whole. */
+static BOOL vtRipClipOn;
+static int vtRipClip[4];
+
+/* Cell x of the row v is a tile of may be drawn: always, but under the clip a canvas cell the area misses. */
+static BOOL VtClipHit(const vt_image_view *v, int x)
+{
+    int lo, top;
+
+    if (!vtRipClipOn || !VtIsRipCanvas(v))
+        return TRUE;
+    lo = (x - v->col0) * v->cw - v->px0;
+    top = v->py;
+    return lo < vtRipClip[2] && lo + v->cw > vtRipClip[0] && top < vtRipClip[3] && top + v->ch > vtRipClip[1];
+}
+
+/* One finished RIP command is drawn: the engine flushes its damage (every row the canvas is on, whole width),
+ * and the host blits only the area the command changed. Text in the same stretch moves the tiles and makes the
+ * whole canvas dirty (the engine's rip_reanchor), so it is never left stale. */
+static void VtRipFlush(void)
+{
+    vtRipClipOn = vt_rip_take_dirty(vtTerm, &vtRipClip[0], &vtRipClip[1], &vtRipClip[2], &vtRipClip[3]) != 0;
+    vt_flush(vtTerm);
+    vtRipClipOn = FALSE;
+}
+
 /* The pictures on grid rows [y0, y1), cells [x0, x1), in vt_row_image's
  * order: those under the text first, the row's glyphs over them, then
  * those over the text. */
@@ -710,11 +772,11 @@ static void VtDrawImages(int x0, int y0, int x1, int y1)
             if (xe > n)
                 xe = n;
             for (x = v.col0 > x0 ? v.col0 : x0; x < xe;) {
-                if (!VtImgCell(&v, &c[x])) {
+                if (!VtImgCell(&v, &c[x]) || !VtClipHit(&v, x)) {
                     x++;
                     continue;
                 }
-                for (a = x; x < xe && VtImgCell(&v, &c[x]); x++)
+                for (a = x; x < xe && VtImgCell(&v, &c[x]) && VtClipHit(&v, x); x++)
                     ;
                 VtImgRun(&v, a, x, y);
                 if (v.z < 0)
@@ -722,6 +784,19 @@ static void VtDrawImages(int x0, int y0, int x1, int y1)
             }
         }
     }
+}
+
+/* Row gy shows an opaque RIP canvas: its cells under the text are the canvas's, blitted over, so the text
+ * run need not blank them first (that blank, then the blit, was the flicker of every RIP command). */
+static BOOL VtRowOnCanvas(int gy)
+{
+    vt_image_view v;
+    int i;
+
+    for (i = 0; vt_row_image(vtTerm, gy, i, &v); i++)
+        if (VtIsRipCanvas(&v))
+            return TRUE;
+    return FALSE;
 }
 
 /* Draw cells x0 <= x < x1 of rows y0 <= y < y1 from the grid. */
@@ -736,6 +811,9 @@ static void VtDraw(void *user, int x0, int y0, int x1, int y1)
         const vt_cell *c = vt_row(vtTerm, y - vtScrollOff, &n);
         if (!c)
             continue;
+        BOOL onCanvas = !term_cursor_paint && vt_images(vtTerm) && VtImgRp() && VtRowOnCanvas(y - vtScrollOff) &&
+                        (vtScrollOff || !vt_row_size(vtTerm, y));
+
         cur_y = (WORD)y;
         term_sync_row_base();
         for (x = x0; x < x1 && x < n; x++) {
@@ -743,6 +821,9 @@ static void VtDraw(void *user, int x0, int y0, int x1, int y1)
             vt_u32 ch = c[x].ch;
             vt_cell cell = c[x];
             UBYTE code;
+
+            if (onCanvas && (c[x].pad & VT_CELL_UNDER))
+                continue;               /* the canvas is blitted over this cell (VtDrawImages) */
             /* Blink is never animated (no timer; the owner's decision, MA1-7
              * exemption). With iCE colours on (BLINK_ICE) the engine turns
              * blink on a dark background into the bright background; with
@@ -992,12 +1073,30 @@ static void VtApplyPersonality(void)
  * site changes it. The engine modes: 0 is plain text (drops a canvas), 1 is RIP
  * active at once, 2 is Auto: plain text until the host sends ESC[! or a valid
  * !| line (vt_rip_active tells). Auto -> 2, On -> 1, Off -> 0. */
-static void VtApplyRip(void)
+static void VtApplyRipMode(void)
 {
     if (!vtTerm)
         return;
     vt_set_rip(vtTerm, Prefs_RipEngineMode(&prefs));
     vt_set_rip_stroke(vtTerm, prefs.RipFonts == RIPFONT_STROKE ? 1 : 0);
+}
+
+static void VtRipWatch(void);
+static void VtRedraw(void);
+
+/* The menu and site changes: the engine mode, then at once what it did to the screen (RIP Off drops the
+ * canvas and returns to the text screen now, not with the next byte from the BBS). */
+static void VtApplyRip(void)
+{
+    BOOL was;
+
+    if (!vtTerm)
+        return;
+    was = vt_rip_active(vtTerm) != 0;
+    VtApplyRipMode();
+    VtRipWatch();
+    if (was != (vt_rip_active(vtTerm) != 0))
+        VtRedraw();                     /* the canvas is gone (or RIP is on): every cell again */
 }
 
 /* RIPscrip screen switch (D4/D5/D12), the one place that watches the engine's
@@ -1101,7 +1200,7 @@ static void VtRipEnd(void)
     {
         vt_set_rip(vtTerm, 0);          /* inactive: VtRipWatch puts the screen back */
         VtRipWatch();
-        VtApplyRip();
+        VtApplyRipMode();
     }
 }
 
@@ -1397,7 +1496,7 @@ static int VtOpen(void)
     vt_set_image_rgb_copy(vtTerm, vtPicPens);
     VtSetAspect();
     VtApplyPersonality();
-    VtApplyRip();
+    VtApplyRipMode();
     vt_set_download_sink(vtTerm, VtDownload_Sink, vtDlHost);   /* inline=0 files: Download Path/<host>/<name> */
     vt_set_image_decoder(vtTerm, NULL, VtFileFree);             /* no PNG decoder; frees what VtFileRead gave */
     vt_set_file_reader(vtTerm, VtFileRead, NULL);              /* RIP 1I icons; no unlink, kitty t=t stays refused */
@@ -1516,6 +1615,47 @@ static BOOL VtScrollKey(UWORD rawkey, BOOL shift)
  * the old machines. Each flush takes the layers for its drawing and gives them back
  * (VtDrawPause), so a menu can still open between commands. The bytes after the
  * last finished command are drawn by a last vt_flush, as vt_write would. */
+/* RIP Auto, back to text: AmiExpress never sends ESC[1!, so a clear screen (ESC[2J) that no RIP command
+ * follows in the same write means the BBS has gone back to plain text. VtClsScan finds the clear in the
+ * bytes of the RIP path (its state survives a split between writes); VtRipAutoLeave, at the end of the
+ * write, drops RIP when no command came after it. RIP On stays on. */
+static UBYTE vtClsState;                /* 0 ground, 1 after ESC, 2 after ESC [, 3 after ESC [ 2 */
+static BOOL vtClsPending;
+static long vtClsCmds;                  /* vt_rip_commands at the clear */
+
+static BOOL VtClsScan(const UBYTE *d, long n)
+{
+    BOOL seen = FALSE;
+
+    for (; n > 0; n--, d++) {
+        UBYTE b = *d;
+
+        if (b == 27)
+            vtClsState = 1;
+        else if (vtClsState == 1 && b == '[')
+            vtClsState = 2;
+        else if (vtClsState == 2 && b == '2')
+            vtClsState = 3;
+        else if (vtClsState == 3 && b == 'J') {
+            seen = TRUE;
+            vtClsState = 0;
+        } else
+            vtClsState = 0;
+    }
+    return seen;
+}
+
+static void VtRipAutoLeave(void)
+{
+    BOOL leave = vtClsPending && vt_rip_commands(vtTerm) == vtClsCmds && Prefs_RipEngineMode(&prefs) == 2;
+
+    vtClsPending = FALSE;
+    if (!leave || !vt_rip_active(vtTerm))
+        return;
+    vt_set_rip(vtTerm, 0);              /* drops the canvas; VtRipWatch (next) puts the text screen back */
+    VtApplyRipMode();                   /* Auto again: text until the BBS speaks RIP */
+}
+
 static void VtFeedRip(const UBYTE *data, long len)
 {
     long done = vt_rip_commands(vtTerm);
@@ -1525,17 +1665,22 @@ static void VtFeedRip(const UBYTE *data, long len)
         const UBYTE *lf = memchr(data, '\n', (size_t)len);
         const UBYTE *end = bar && (!lf || bar < lf) ? bar : lf;
         long n = end ? (long)(end - data) + 1 : len;
+        BOOL cls = VtClsScan(data, n);
 
         vt_feed(vtTerm, data, n);
+        if (cls) {
+            vtClsPending = TRUE;
+            vtClsCmds = vt_rip_commands(vtTerm);
+        }
         data += n;
         len -= n;
         if (vt_rip_commands(vtTerm) != done) {
             done = vt_rip_commands(vtTerm);
-            vt_flush(vtTerm);
+            VtRipFlush();
             VtDrawPause();
         }
     }
-    vt_flush(vtTerm);
+    VtRipFlush();
 }
 
 /* The bytes of one VtWrite, after the UTF-8 sniffer. Plan H2c part C: in RIP Auto
@@ -1607,6 +1752,7 @@ static void VtWriteIn(const UBYTE *data, long len, BOOL sniff)
     } else
         VtFeed(data, len);
     vtInWrite = FALSE;
+    VtRipAutoLeave();
     VtRipWatch();                   /* the one place RIP going active/inactive is noticed */
     /* RIP Auto went active halfway through the chunk: when no screen reopen was asked
      * for (RIPSCREEN_FIT keeps the screen) the rest goes out now, command by command;
@@ -1619,6 +1765,7 @@ static void VtWriteIn(const UBYTE *data, long len, BOOL sniff)
         vtHeldLen = 0;
         VtFeedRip(held, n);
         free(held);
+        VtRipAutoLeave();
         VtRipWatch();
     }
     VtParseEnd();

@@ -2502,6 +2502,175 @@ static void test_rip_h3_the_ripscrip_preference_reaches_the_engine(void)
     assert(vt_images(vtTerm) == images);
 }
 
+/* RIP bulletin bugs (rip-bull-bugs): a BBS bulletin sends many RIP commands in a row. */
+
+/* 1. Flicker: a RIP command repaints what it changed (vt_rip_take_dirty), not the whole canvas, and the text
+ * cells under the opaque canvas are not blanked. A small bar after a full canvas blits a few rows only. */
+static void test_rip_bull_1_a_small_command_blits_only_its_dirty_rows(void)
+{
+    unsigned long full, small;
+    UBYTE barpen;
+    vt_image_view v;
+
+    xterm_begin();
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    prefs.RipMode = RIPMODE_ON;
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[2!\r\n");
+    calls[0] = 0;
+    vt_put("!|S0109|B0A0A2S2S\r\n");
+    vtImgRuns = 0;
+    VtDraw(NULL, 0, 0, term_cols, term_rows);
+    full = vtImgRuns;
+    assert(full > 10);                                          /* the whole 350-row canvas */
+
+    vtImgRuns = 0;
+    calls[0] = 0;
+    vt_put("!|S0101|B0A0A141E\r\n");                            /* bar (10,10)-(40,50): 40 rows */
+    small = vtImgRuns;
+    assert(small > 0 && small * 3 < full);                      /* the sentinel: blitted, and not all of it */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    barpen = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[1] & 0xFFFFFFUL)))];
+    assert(chunkyFb[(TERM_PY(0) + 20) * FB_W + TERM_PX(0) + 20] == barpen);     /* the new bar is on screen */
+    VtClose();
+}
+
+/* 2. #87 colour picker: a picture's pens are keyed on the palette, not the image serial, so a RIP canvas whose
+ * palette stays put is picked once, not once a command. */
+static void rip_bull_bar(int colour, int x0)
+{
+    static const char dig[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    char cmd[64];
+
+    sprintf(cmd, "!|S01%c%c|B%c%c0A%c%c1E\r\n", dig[colour / 36], dig[colour % 36],
+            dig[x0 / 36], dig[x0 % 36], dig[(x0 + 20) / 36], dig[(x0 + 20) % 36]);
+    calls[0] = 0;
+    vt_put(cmd);
+}
+
+static void test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette(void)
+{
+    unsigned long picks;
+    int i;
+
+    xterm_begin_on(5, 0);
+    obtainBudget = 12;
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[2!\r\n");
+    vtPicPicks = 0;
+    for (i = 1; i <= 15; i++)                                   /* 15 colours: more than the 12 free pens */
+        rip_bull_bar(i, 10 + 30 * (i - 1));
+    picks = vtPicPicks;
+    assert(picks >= 1);                                         /* the sentinel: the picker ran for the canvas */
+    for (i = 0; i < 3; i++)
+        rip_bull_bar(15, 10 + 30 * 14);                         /* more commands, the same palette */
+    assert(vtPicPicks == picks);                                /* not picked again */
+    calls[0] = 0;
+    vt_put("!|a0904\r\n");                                      /* palette entry 9 changes */
+    assert(vtPicPicks == picks + 1);                            /* a new palette: picked again */
+    VtClose();
+}
+
+/* 3. Menu RIPscrip Off puts the text screen back at once, not with the next byte from the BBS. */
+static void test_rip_bull_3_menu_rip_off_leaves_rip_without_a_byte(void)
+{
+    xterm_begin();
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    calls[0] = 0;
+    VtApplyRip();
+    assert(vt_rip_active(vtTerm) == 1);
+    ripReopens = 0;
+    prefs.RipMode = RIPMODE_OFF;
+    calls[0] = 0;
+    VtApplyRip();
+    assert(vt_rip_active(vtTerm) == 0);
+    assert(ripReopens >= 1);                                    /* the screen switch back ran, no byte needed */
+    VtClose();
+}
+
+/* 4. Auto: ESC[2J with no RIP command after it leaves RIP and returns to text; with a RIP command it stays. */
+static void test_rip_bull_4_auto_clear_screen_without_rip_returns_to_text(void)
+{
+    xterm_begin();
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO;
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[!");
+    calls[0] = 0;
+    vt_put(ripLine);
+    assert(vt_rip_active(vtTerm) == 1);
+    ripReopens = 0;
+    calls[0] = 0;
+    vt_put("\033[2J");                                          /* a RIP BBS clears with RIP |* , not this */
+    calls[0] = 0;
+    vt_put("Plain menu\r\n");
+    assert(vt_rip_active(vtTerm) == 0);
+    assert(ripReopens >= 1);
+    VtClose();
+
+    xterm_begin();                                              /* the clear split across two writes */
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[!");
+    calls[0] = 0;
+    vt_put(ripLine);
+    calls[0] = 0;
+    vt_put("\033[2");
+    calls[0] = 0;
+    vt_put("JText\r\n");
+    assert(vt_rip_active(vtTerm) == 0);
+    VtClose();
+
+    xterm_begin();                                              /* a RIP command after the clear: stay */
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[!");
+    calls[0] = 0;
+    vt_put(ripLine);
+    calls[0] = 0;
+    vt_put("\033[2J");
+    calls[0] = 0;
+    vt_put(ripLine);
+    assert(vt_rip_active(vtTerm) == 1);
+    VtClose();
+
+    xterm_begin();                                              /* On never leaves */
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[2J");
+    calls[0] = 0;
+    vt_put("Text\r\n");
+    assert(vt_rip_active(vtTerm) == 1);
+    prefs.RipMode = RIPMODE_AUTO;
+    calls[0] = 0;
+    VtApplyRip();
+    VtClose();
+}
+
 /* The per-site RIPscrip Fonts preference reaches the engine through VtApplyRip:
  * Stroke draws RIP font style 1 with Hershey strokes (the sentinel counts the
  * stroke glyphs), Bitmap with the 8x8 font, and the canvas pixels differ. */
@@ -2877,6 +3046,7 @@ static unsigned long rip_auto_oneshot_sum(void)
     FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
     size_t n = fread(buf, 1, sizeof buf, f);
     fclose(f);
+    VtRipEnd();                                     /* the caller's RIP switch ends first: VtApplyRip now watches it */
     xterm_begin();
     vt_put("\033c\033[2J");
     prefs.RipMode = RIPMODE_AUTO; prefs.RipScreen = RIPSCREEN_FIT;
@@ -3099,6 +3269,10 @@ int main(void)
     test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque();
     test_rip_index_0_is_the_palette_colour_not_the_background();
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
+    test_rip_bull_1_a_small_command_blits_only_its_dirty_rows();
+    test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette();
+    test_rip_bull_3_menu_rip_off_leaves_rip_without_a_byte();
+    test_rip_bull_4_auto_clear_screen_without_rip_returns_to_text();
     test_rip_icons_a_1i_icon_is_read_from_the_board_folder();
     test_rip_fonts_preference_reaches_the_engine();
     test_rip_h4_the_screen_switch_is_wired_through_the_data_path();
