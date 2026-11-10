@@ -276,6 +276,13 @@ static int newSawTerm;
 static int newSb;                   /* the scrollback line count VtOpen handed vt_new */
 static vt_term *probe_new(int cols, int rows, int sb, const vt_callbacks *cb, void *user);
 #define vt_new(c, r, sb, cb, u) probe_new((c), (r), (sb), (cb), (u))
+/* RMB-FREEZE-RIG2: the engine's parse of a write (a RIP picture rasterises
+ * for seconds on an A500), seen from outside: how often it ran with the
+ * screen's LayerInfo held, and a menu that opens meanwhile (menuOnParse). */
+static int parses, parsedLocked, menuOnParse;
+static UBYTE atMenu[4][BPR * H];    /* the planes as the menu opened */
+static void probe_write(vt_term *t, const vt_u8 *buf, long len);
+#define vt_write(t, b, n) probe_write((t), (b), (n))
 /* H4: DCTelnet.c's reopen hook and default-screen rule, as counting stubs. */
 static int ripReopens, ripDefaultAsked;
 static ULONG ripReopenDisplayID, ripReopenWas;
@@ -297,6 +304,17 @@ static void VtRipScreenChanged(const struct PrefsStruct *before)
 struct SiteHandChanges handChanges;     /* DCTelnet.c's record of temporary changes */
 ULONG sessionSettingsId;                /* 0: a quick connect, no entry session */
 #include "../src/vtbuiltin.c"
+#undef vt_write
+static void probe_write(vt_term *t, const vt_u8 *buf, long len)
+{
+    parses++;
+    parsedLocked += layerLocks;
+    if (menuOnParse) {
+        screen.LayerInfo.top_layer = &menuLayer;
+        memcpy(atMenu, planes, sizeof(atMenu));
+    }
+    vt_write(t, buf, len);
+}
 #undef term_glyph
 #undef vt_new
 #undef vt_set_pixel_aspect
@@ -360,7 +378,7 @@ static void setup(void)
     menuLayer.back = &winLayer;
     menuLayer.bounds.MinX = 0; menuLayer.bounds.MinY = 0;
     menuLayer.bounds.MaxX = 199; menuLayer.bounds.MaxY = 40;
-    layerLocks = bltUnlocked = blitBusy = unlockedBusy = sentLocked = menuOnSend = 0;
+    layerLocks = bltUnlocked = blitBusy = unlockedBusy = sentLocked = menuOnSend = menuOnParse = 0;
     assert(term_init_area(&screen, &winRp, 0, TOP, 0, TOP, W, H - TOP, &font) == 0);
     calls[0] = 0;
 }
@@ -593,6 +611,32 @@ static void test_a_menu_opened_while_an_answer_is_sent_is_drawn_around(void)
     VtClose();
 }
 
+
+/* RMB-FREEZE-RIG2: holding the right mouse button froze an A500 rig while a
+ * RIP picture came in. Intuition opens a menu under the screen's LayerInfo;
+ * VtWrite held it across the engine's whole parse, seconds per 1 KB of RIP.
+ * The parse draws nothing on the screen, so it runs with the layers free;
+ * they are taken for the drawing only, looked at then, so a menu that opened
+ * during the parse is drawn around. */
+static void test_a_menu_opens_while_a_rip_picture_is_parsed(void)
+{
+    setup();
+    assert(VtOpen() == 0);
+    parses = parsedLocked = bltUnlocked = 0;     /* (term_init_area's clear) */
+    vt_write_str("Hello");
+    assert(parses > 0 && parsedLocked == 0);    /* parsed with the layers free */
+    assert(calls[0] == 0 && bltUnlocked == 0);  /* drawn into the bitmap, held */
+    assert(planes[0][TOP * BPR] == 'H');
+    assert(layerLocks == 0);
+    menuOnParse = 1;                            /* the right button goes down */
+    calls[0] = 0;
+    vt_write_str("\rWorld");
+    menuOnParse = 0;
+    assert(memcmp(atMenu, planes, sizeof(planes)) == 0);   /* not over the menu */
+    assert(strstr(calls, "\"World\""));        /* through the RastPort */
+    assert(layerLocks == 0);
+    VtClose();
+}
 
 /* --- MA1: the built-in renderer as a PC ANSI terminal for BBS art --- */
 
@@ -2093,6 +2137,7 @@ int main(void)
     test_a_menu_cannot_open_while_the_terminal_draws_into_the_bitmap();
     test_a_menu_open_over_the_terminal_is_drawn_around();
     test_a_menu_opened_while_an_answer_is_sent_is_drawn_around();
+    test_a_menu_opens_while_a_rip_picture_is_parsed();
     test_ma1_2_line_art_lands_in_the_grid_and_reaches_the_glyph_writer();
     test_ma1_3_blocks_and_shades_map_to_themselves_never_to_the_fallback();
     test_ma1_1_latin1_byte_reaches_the_glyph_writer_unchanged();

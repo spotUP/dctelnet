@@ -468,17 +468,85 @@ static void VtLayersUnlock(void)
     UnlockLayerInfo(&scr->LayerInfo);
 }
 
+/* A write's drawing: the layers looked at (and held when the engine draws
+ * straight into the bitmap), the cursor hidden. Opened only around what goes
+ * on the screen, never across the engine's parse: a RIP picture rasterises
+ * into the engine's canvas for seconds on an A500, and Intuition needs the
+ * LayerInfo to open a menu or move a window meanwhile (RMB-FREEZE-RIG2). */
+static BOOL vtDrawOpen;
+static void VtSyncCursor(void);
+static BOOL vtInWrite;      /* the engine parses: its draws open the drawing */
+
+static void VtDrawBegin(void)
+{
+    if (vtDrawOpen)
+        return;
+    vtDrawOpen = TRUE;
+    VtLayersLock();
+    cursor_hide();
+}
+
+/* The layers given back mid-write; the cursor stays hidden. */
+static void VtDrawPause(void)
+{
+    if (!vtDrawOpen)
+        return;
+    term_flush();
+    VtLayersUnlock();
+    vtDrawOpen = FALSE;
+}
+
+static void VtDrawEnd(void)
+{
+    if (!vtDrawOpen)
+        return;
+    term_flush();
+    VtSyncCursor();
+    cursor_show();
+    VtLayersUnlock();
+    vtDrawOpen = FALSE;
+}
+
+/* The engine's damage and scroll calls: in a write, the drawing opens first. */
+static void VtDamage(void *user, int x0, int y0, int x1, int y1)
+{
+    if (vtInWrite)
+        VtDrawBegin();
+    VtDraw(user, x0, y0, x1, y1);
+}
+
+static void VtScrollCb(void *user, int top, int bottom, int n)
+{
+    if (vtInWrite)
+        VtDrawBegin();
+    VtScroll(user, top, bottom, n);
+}
+
 /* An answer to the BBS, in the middle of a write: sent with the layers
- * unlocked (a send that waits would hold up every window on the screen),
- * looked at again after. */
+ * unlocked (a send that waits would hold up every window on the screen);
+ * the next draw looks at them again. */
 static void VtReply(void *user, const vt_u8 *buf, long len)
 {
-    BOOL held = vtLayersHeld;
-
-    VtLayersUnlock();
+    VtDrawPause();
     send_data((const UBYTE *)buf, len);
-    if (held)
-        VtLayersLock();
+}
+
+/* Around one engine parse: the cursor off first, from the cells it was
+ * drawn over (the parse changes them, a scroll moves them), then the layers
+ * free for the parse; the engine's draws take them again, and the end draws
+ * the cursor where the engine left it. */
+static void VtParseBegin(void)
+{
+    VtDrawBegin();
+    VtDrawPause();
+    vtInWrite = TRUE;
+}
+
+static void VtParseEnd(void)
+{
+    vtInWrite = FALSE;
+    VtDrawBegin();
+    VtDrawEnd();
 }
 
 /* After the engine has drawn: the cursor where the engine has it. */
@@ -831,7 +899,7 @@ static void VtSetAspect(void)
  * new grid and drawn again. Only a first open makes an engine. */
 static int VtOpen(void)
 {
-    static const vt_callbacks cb = { VtDraw, VtScroll, VtReply, NULL, VtTitle, NULL, NULL,
+    static const vt_callbacks cb = { VtDamage, VtScrollCb, VtReply, NULL, VtTitle, NULL, NULL,
                                      NULL, NULL, NULL, NULL, NULL,
                                      NULL };  /* clipboard, cwd, notify, music, RIP level-9 blocks: not used */
 
@@ -980,8 +1048,7 @@ static void VtWrite(const UBYTE *data, long len)
 {
     if (vtScrollOff)
         VtScrollView(-vtScrollOff);     /* new output: back to the live grid */
-    VtLayersLock();
-    cursor_hide();
+    VtParseBegin();
     /* Unix host, Character Set not UTF-8: the first valid UTF-8 sequence moves
      * the engine to UTF-8 for the rest of the connection; prefs stay as they are.
      * A trailing incomplete prefix is held back until the next write decides it. */
@@ -996,11 +1063,9 @@ static void VtWrite(const UBYTE *data, long len)
         vt_write(vtTerm, data, ndata);
     } else
         vt_write(vtTerm, data, len);
+    vtInWrite = FALSE;
     VtRipWatch();                   /* the one place RIP going active/inactive is noticed */
-    term_flush();
-    VtSyncCursor();
-    cursor_show();
-    VtLayersUnlock();
+    VtParseEnd();
     VtTitleSync();
     TerminalMouseReport();          /* ?1002 / ?1003 may have changed */
 }
@@ -1024,11 +1089,7 @@ static void VtFlushHeld(void)
     if (vtScrollOff)
         VtScrollView(-vtScrollOff);
     n = Vt_Utf8SnifferTakeHeld(&vtSniff, pre);
-    VtLayersLock();
-    cursor_hide();
+    VtParseBegin();
     vt_write(vtTerm, pre, n);
-    term_flush();
-    VtSyncCursor();
-    cursor_show();
-    VtLayersUnlock();
+    VtParseEnd();
 }
