@@ -314,9 +314,9 @@ test_kitty_engine: test_kitty_engine.c $(VTCON)/tests/harness.c $(VTCON)/tests/t
 test_vtdownload: test_vtdownload.c fake_dos.c ../src/vtdownload.c ../src/vtdownload.h
 	$(CC) $(CFLAGS) -D_DEFAULT_SOURCE -Ishim -o $@ test_vtdownload.c fake_dos.c ../src/vtdownload.c
 
-test_term_engine: test_term_engine.c ../src/third_party/retro32-term/term-engine.c ../src/vtbuiltin.c ../src/vtpersonality.c ../src/glyphraster.c ../src/glyphraster.h ../src/screenfont.c ../src/vtpens.c ../src/vtinput.c ../src/vtinput.h ../src/vtdownload.c fake_dos.c ../src/site_prefs.c ../src/prefs_file.c ../src/palette.c \
+test_term_engine: test_term_engine.c fixtures/rip-icon.rip ../src/third_party/retro32-term/term-engine.c ../src/vtbuiltin.c ../src/vtpersonality.c ../src/glyphraster.c ../src/glyphraster.h ../src/screenfont.c ../src/vtpens.c ../src/vtinput.c ../src/vtinput.h ../src/vtdownload.c fake_dos.c ../src/site_prefs.c ../src/prefs_file.c ../src/palette.c \
                   $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
-	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -Ishim -I$(VTCON)/engine -I$(VTCON)/render \
+	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-parameter -D_DEFAULT_SOURCE -Ishim -I$(VTCON)/engine -I$(VTCON)/render \
 	      -o $@ test_term_engine.c ../src/glyphraster.c ../src/screenfont.c ../src/vtpersonality.c ../src/vtpens.c ../src/vtinput.c ../src/vtdownload.c fake_dos.c ../src/site_prefs.c ../src/prefs_file.c ../src/palette.c $(VTCON)/engine/vtengine.c $(VTCON)/render/glyphmap.c
 
 # A PETSCII mode change (an Address Book entry starts or ends) must take the

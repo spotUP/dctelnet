@@ -874,6 +874,18 @@ static void VtRipEnd(void)
  * Kept here so a reopened display (VtOpen) gets it back; "" is "local". */
 static char vtDlHost[52];
 
+/* RIP 1I icons: the engine asks for a bare file name; it comes from the board's
+ * folder (the sink's host, vt_download_host) or PROGDIR:Icons (VtDownload_Read). */
+static int VtFileRead(const char *path, long offset, long size, vt_u8 **buf, long *n)
+{
+    return VtDownload_Read(vtTerm ? vt_download_host(vtTerm) : NULL, path, offset, size, buf, n);
+}
+
+static void VtFileFree(vt_u32 *buf)
+{
+    VtDownload_Release(buf);
+}
+
 static void VtSetDownloadHost(const char *host)
 {
     strncpy(vtDlHost, host ? host : "", sizeof(vtDlHost) - 1);    /* static: last byte stays 0 */
@@ -1143,6 +1155,8 @@ static int VtOpen(void)
     VtApplyPersonality();
     VtApplyRip();
     vt_set_download_sink(vtTerm, VtDownload_Sink, vtDlHost);   /* inline=0 files: Download Path/<host>/<name> */
+    vt_set_image_decoder(vtTerm, NULL, VtFileFree);             /* no PNG decoder; frees what VtFileRead gave */
+    vt_set_file_reader(vtTerm, VtFileRead, NULL);              /* RIP 1I icons; no unlink, kitty t=t stays refused */
     Vt_MouseReset(&vtMouse);
     vtTitleSeen[0] = vtTitleShown[0] = 0;
     TerminalMouseReport();

@@ -3546,7 +3546,8 @@ static void ReplayReport(void)
 {
     ULONG redrawUs = ReplayRedrawUs();
 
-    Printf("replay: canvas=%lu blits=%lu feed_ticks=%lu\n", VtCanvasSum(), vtImgRuns, replayTicks);
+    Printf("replay: canvas=%lu blits=%lu feed_ticks=%lu icons=%lu\n", VtCanvasSum(), vtImgRuns, replayTicks,
+           vtTerm ? (ULONG)vt_rip_icons(vtTerm) : 0UL);
     Printf("replay: redraw_us=%lu blit_us=%lu redraw_n=%lu\n", redrawUs, replayBlitUs, (ULONG)REPLAY_REDRAWS);
     replayPending = FALSE;
 }
