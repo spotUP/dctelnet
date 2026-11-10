@@ -9,6 +9,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <exec/types.h>
 #include "prefs.h"
 #include "charset.h"
@@ -1917,6 +1919,56 @@ static void test_rip_index_0_is_the_palette_colour_not_the_background(void)
     assert(chunkyFb[(TERM_PY(0) + 200) * FB_W + TERM_PX(0) + 150] == pen0);
 }
 
+/* RIP-ICONS: a 1I icon reaches the canvas through the bytes path DCTelnet
+ * --replay takes (the fixture file in 1 KB chunks into VtWrite, as ReplayFeed
+ * through ShowText), read from <Download Path>/<board>/ by the reader VtOpen
+ * sets. vt_rip_icons is the sentinel that the reader's bytes were drawn. The
+ * icon is vtcon's test_rip 8x2 file: header width-1, height-1, then planes. */
+static void test_rip_icons_a_1i_icon_is_read_from_the_board_folder(void)
+{
+    static const unsigned char icn[] = { 7, 0, 1, 0, 0xF0, 0x0F, 0xAA, 0x00, 0xFF, 0xFF, 0xFF, 0xFF };
+    char dir[64] = "/tmp/dctelnet-ripicons-XXXXXX", path[160], cmd[128];
+    unsigned char chunk[1024];
+    vt_image_view v;
+    FILE *f;
+    size_t n;
+
+    assert(mkdtemp(dir));
+    snprintf(path, sizeof(path), "%s/bbs.example", dir);
+    assert(mkdir(path, 0755) == 0);
+    snprintf(path, sizeof(path), "%s/bbs.example/TEST.ICN", dir);
+    f = fopen(path, "wb");
+    assert(f && fwrite(icn, 1, sizeof(icn), f) == sizeof(icn));
+    fclose(f);
+    xterm_begin();                                  /* resets prefs: the Download Path comes after */
+    strcpy((char *)prefs.DownloadPath, dir);
+    vt_put("\033c\033[2J");
+    VtSetDownloadHost("bbs.example");
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[2!\r\n");
+    assert(vt_rip_icons(vtTerm) == 0);
+    f = fopen("fixtures/rip-icon.rip", "rb");
+    assert(f);
+    while ((n = fread(chunk, 1, sizeof(chunk), f)) > 0)
+        VtWrite(chunk, (long)n);
+    fclose(f);
+    assert(vt_rip_icons(vtTerm) == 1);              /* the reader ran and the icon was drawn */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    assert(v.pix[3 * 640 + 4] == 5 && v.pix[4 * 640 + 4] == 15 && v.pix[3 * 640 + 12] == 0);
+
+    /* Another board has no such file and PROGDIR:Icons/ has none: no icon. */
+    VtSetDownloadHost("other.example");
+    vt_put("\033c\033[2J\033[2!\r\n");
+    vt_put("!|1I0403001" "0000TEST\r\n");
+    assert(vt_rip_icons(vtTerm) == 1);
+
+    VtSetDownloadHost(NULL);
+    prefs.DownloadPath[0] = 0;
+    snprintf(cmd, sizeof(cmd), "rm -rf %s", dir);
+    assert(system(cmd) == 0);
+}
+
 /* RIP-H3: the per-site RIPscrip preference reaches the engine. The test drives
  * VtApplyRip (open, menu and site change all call it) and the byte path VtWrite:
  * Off leaves the RIP line as text (no canvas, no parsed command); Auto and On
@@ -2581,6 +2633,7 @@ int main(void)
     test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque();
     test_rip_index_0_is_the_palette_colour_not_the_background();
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
+    test_rip_icons_a_1i_icon_is_read_from_the_board_folder();
     test_rip_fonts_preference_reaches_the_engine();
     test_rip_h4_the_screen_switch_is_wired_through_the_data_path();
     test_rip_h5_click_reaches_the_reply_path();
