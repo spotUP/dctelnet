@@ -47,7 +47,8 @@ static void call(const char *fmt, long a, long b, long c, long d, long e)
 {
     char line[160];
     snprintf(line, sizeof(line), fmt, a, b, c, d, e);
-    strcat(calls, line);
+    if (strlen(calls) + strlen(line) < sizeof(calls))   /* a full log drops the rest */
+        strcat(calls, line);
 }
 
 /* The screen's LayerInfo, as Intuition sees it: the drawing that went into
@@ -97,19 +98,26 @@ static void Text(struct RastPort *rp, STRPTR s, ULONG n)
     snprintf(line, sizeof(line), "Text(%d,%d fg%d bg%d \"%.*s\")\n", rp->cx, rp->cy, rp->FgPen, rp->BgPen, (int)n, s);
     strcat(calls, line);
 }
+#define FB_W 700
+#define FB_H 420
+static UBYTE chunkyFb[FB_W * FB_H];     /* the last pen written at each pixel, 0xFF where none */
 static void RectFill(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
 {
     if (rp->DrawMode == COMPLEMENT)
         call("Complement(%ld,%ld,%ld,%ld mask%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)rp->Mask);
     else
         call("RectFill(%ld,%ld,%ld,%ld pen%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)rp->FgPen);
+    if (rp->DrawMode != COMPLEMENT) {
+        LONG x, y;
+        for (y = y0; y <= y1; y++)
+            for (x = x0; x <= x1; x++)
+                if (x >= 0 && x < FB_W && y >= 0 && y < FB_H)
+                    chunkyFb[y * FB_W + x] = rp->FgPen;
+    }
 }
 /* Pictures (kitty graphics): the chunky writes, one line each with the
  * first pixel's pen. */
 static int chunkyCalls;
-#define FB_W 700
-#define FB_H 420
-static UBYTE chunkyFb[FB_W * FB_H];     /* the last pen written at each pixel, 0xFF where none */
 static void WriteChunkyPixels(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, UBYTE *a, LONG mod)
 {
     LONG x, y, stride = mod ? mod : x1 - x0 + 1;
@@ -2112,6 +2120,44 @@ static void test_rip_h7_replay_checksum_equals_the_vtcon_golden(void)
     VtClose();
 }
 
+/* Plan H2c part A: the canvas's long single-colour runs reach the screen as
+ * RectFills (the blitter), the mixed spans as chunky blits. The fixture is
+ * vtcon's 07-buttons.rip after ESC [ !; the sum is its replayed canvas (the same
+ * as before the change), the RectFill count the sentinel that the flat path ran. */
+static void test_rip_h2c_a_flat_runs_go_out_as_rectfills_through_vtwrite(void)
+{
+    static UBYTE buf[512];
+    FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
+    size_t n;
+    vt_image_view v;
+    int x, y;
+
+    assert(f);
+    n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    assert(n > 0 && n < sizeof buf);
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[!");
+    vtImgFills = 0;
+    chunkyCalls = 0;
+    VtWrite(buf, (long)n);
+    assert(vt_rip_commands(vtTerm) > 0);
+    assert(VtCanvasSum() == 621586454UL);
+    assert(vtImgFills > 0);                         /* the sentinel: flat runs ran */
+    assert(strstr(calls, "RectFill("));
+    /* RectFills and chunky blits together leave every canvas pixel at its mapped pen */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    for (y = 0; y < v.h && y < term_rows * 8; y++)      /* the rows the screen shows */
+        for (x = 0; x < v.w; x++)
+            assert(chunkyFb[(TERM_PY(0) + y) * FB_W + TERM_PX(0) + x] == vtImgMap[v.pix[y * v.w + x]]);
+    VtClose();
+}
+
 /* The RIP switch is temporary for the run: in a quick connect (no entry
  * session) the live prefs are what SavePrefs writes, so what it would save
  * must still be the pre-RIP screen and renderer while RIP is active. */
@@ -2167,6 +2213,7 @@ int main(void)
     test_a_menu_open_over_the_terminal_is_drawn_around();
     test_a_menu_opened_while_an_answer_is_sent_is_drawn_around();
     test_a_menu_opens_while_a_rip_picture_is_parsed();
+    test_rip_h2c_a_flat_runs_go_out_as_rectfills_through_vtwrite();
     test_ma1_2_line_art_lands_in_the_grid_and_reaches_the_glyph_writer();
     test_ma1_3_blocks_and_shades_map_to_themselves_never_to_the_fallback();
     test_ma1_1_latin1_byte_reaches_the_glyph_writer_unchanged();

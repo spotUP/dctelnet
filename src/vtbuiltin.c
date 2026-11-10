@@ -110,6 +110,10 @@ static UBYTE vtImgBuf[8 * VT_IMG_W];    /* one cell row of a run: 8 pixels high 
 static UBYTE vtImgMap[256];             /* the picture's palette index -> screen pen */
 static long vtImgSerial = -1;           /* the picture vtImgMap was made for */
 static unsigned long vtImgRuns;         /* sentinel: picture runs written */
+static unsigned long vtImgFills;        /* sentinel: flat runs sent out as RectFill */
+/* Plan H2c: a row's run of one pen at least this many pixels long goes to the
+ * blitter as a RectFill; only the mixed spans between go through the chunky blit. */
+#define VT_IMG_FLAT_MIN 32
 /* Plan H2c: --replay times the OS blit calls alone (E-clock counts summed while
  * vtImgTime is set), so a redraw splits into blit time and the rest. */
 extern struct Device *TimerBase;
@@ -173,13 +177,54 @@ static void VtImgColours(const vt_image_view *v)
         vtImgMap[i] = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v->pal[i] & 0xFFFFFFUL)))];
 }
 
-static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, LONG stride);
+static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, const UBYTE *buf, LONG stride);
+
+/* One flat rectangle of a band: pixels x0..x1 (inclusive), rows y0..y1 of the band, one pen. */
+typedef struct {
+    WORD x0, x1;
+    BYTE y0, y1;
+    UBYTE pen;
+} VtImgFlat;
+
+/* A row's runs of one pen >= VT_IMG_FLAT_MIN: a run that repeats the previous
+ * row's (same x0, x1, pen) grows that rectangle taller. Returns the count in fl. */
+static int VtImgFlats(VtImgFlat *fl, int n, const UBYTE *row, LONG w, int k)
+{
+    LONG a = 0, b;
+    int was = n;
+
+    while (a < w) {
+        for (b = a + 1; b < w && row[b] == row[a]; b++)
+            ;
+        if (b - a >= VT_IMG_FLAT_MIN) {
+            int m;
+            for (m = 0; m < was; m++)
+                if (fl[m].y1 == k - 1 && fl[m].x0 == a && fl[m].x1 == b - 1 && fl[m].pen == row[a])
+                    break;
+            if (m < was) {
+                fl[m].y1 = (BYTE)k;
+            } else {
+                fl[n].x0 = (WORD)a; fl[n].x1 = (WORD)(b - 1);
+                fl[n].y0 = fl[n].y1 = (BYTE)k;
+                fl[n].pen = row[a];
+                n++;
+            }
+        }
+        a = b;
+    }
+    return n;
+}
 
 /* w x h pixels of v from (sx, sy) to RastPort pixel (dx, dy). */
 static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h, WORD dx, WORD dy)
 {
     LONG stride = (w + 15) & ~15L;      /* WritePixelArray8 wants rows of 16 */
     LONG k, j;
+    static VtImgFlat flat[8 * (VT_IMG_W / VT_IMG_FLAT_MIN)];
+    int nflat = 0, i;
+    struct EClockVal ea, eb;
+    UBYTE oldPen;
+    UBYTE oldMode;
 
     struct RastPort *rp = VtImgRp();
 
@@ -191,26 +236,65 @@ static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h,
         UBYTE *d = vtImgBuf + k * stride;
         for (j = 0; j < w; j++)
             d[j] = vtImgMap[src[j]];
+        nflat = VtImgFlats(flat, nflat, d, w, (int)k);
     }
     vtImgRuns++;
     term_blit_sync();                   /* the glyph blits are done with the planes */
-    if (vtImgTime) {
-        struct EClockVal a, b;
-
-        ReadEClock(&a);
-        VtImgBlit(rp, dx, dy, w, h, stride);
-        ReadEClock(&b);
-        vtImgBlitCounts += b.ev_lo - a.ev_lo;   /* one blit is far below 2^32 counts */
-        return;
+    if (vtImgTime)
+        ReadEClock(&ea);
+    if (!nflat) {
+        VtImgBlit(rp, dx, dy, w, h, vtImgBuf, stride);
+    } else {
+        oldPen = rp->FgPen;
+        oldMode = rp->DrawMode;
+        SetDrMd(rp, JAM2);
+        for (i = 0; i < nflat; i++) {
+            SetAPen(rp, flat[i].pen);
+            RectFill(rp, dx + flat[i].x0, dy + flat[i].y0, dx + flat[i].x1, dy + flat[i].y1);
+            vtImgFills++;
+        }
+        SetAPen(rp, oldPen);
+        SetDrMd(rp, oldMode);
+        /* the mixed spans between the flat runs, row by row */
+        for (k = 0; k < h; k++) {
+            const UBYTE *row = vtImgBuf + k * stride;
+            LONG x = 0;
+            while (x < w) {
+                LONG e = x;
+                BOOL isFlat = FALSE;
+                for (i = 0; i < nflat; i++)
+                    if (flat[i].y0 <= k && k <= flat[i].y1 && flat[i].x0 == x) {
+                        e = flat[i].x1 + 1;
+                        isFlat = TRUE;
+                        break;
+                    }
+                if (isFlat) {
+                    x = e;
+                    continue;
+                }
+                for (e = x; e < w; e++) {   /* up to the next flat rectangle's start on this row */
+                    for (i = 0; i < nflat; i++)
+                        if (flat[i].y0 <= k && k <= flat[i].y1 && flat[i].x0 == e)
+                            break;
+                    if (i < nflat)
+                        break;
+                }
+                VtImgBlit(rp, dx + x, dy + k, e - x, 1, row + x, stride);
+                x = e;
+            }
+        }
     }
-    VtImgBlit(rp, dx, dy, w, h, stride);
+    if (vtImgTime) {
+        ReadEClock(&eb);
+        vtImgBlitCounts += eb.ev_lo - ea.ev_lo;   /* one run is far below 2^32 counts */
+    }
 }
 
-/* vtImgBuf (rows of stride bytes) to RastPort pixel (dx, dy), w x h. */
-static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, LONG stride)
+/* buf (rows of stride bytes) to RastPort pixel (dx, dy), w x h. */
+static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, const UBYTE *buf, LONG stride)
 {
     if (((struct Library *)GfxBase)->lib_Version >= 40) {
-        WriteChunkyPixels(rp, dx, dy, dx + w - 1, dy + h - 1, vtImgBuf, stride);
+        WriteChunkyPixels(rp, dx, dy, dx + w - 1, dy + h - 1, (UBYTE *)buf, stride);
     } else if (((struct Library *)GfxBase)->lib_Version >= 39) {
         /* Kickstart 3.0: WritePixelArray8 and its one-row scratch rastport */
         struct RastPort tmp = *rp;
@@ -218,7 +302,7 @@ static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, LON
         tmp.Layer = NULL;
         tmp.BitMap = AllocBitMap((ULONG)stride, 1, GetBitMapAttr(rp->BitMap, BMA_DEPTH), 0, rp->BitMap);
         if (tmp.BitMap) {
-            WritePixelArray8(rp, dx, dy, dx + w - 1, dy + h - 1, vtImgBuf, &tmp);
+            WritePixelArray8(rp, dx, dy, dx + w - 1, dy + h - 1, (UBYTE *)buf, &tmp);
             FreeBitMap(tmp.BitMap);
         }
     }
