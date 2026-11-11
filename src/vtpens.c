@@ -43,3 +43,17 @@ UBYTE Vt_PenFor(vt_color c, const UWORD ansi[16])
     }
     return (UBYTE)bestPen;
 }
+
+#ifndef HAM_KEY
+#define HAM_KEY 0x00000800UL
+#endif
+#ifndef EXTRAHALFBRITE_KEY
+#define EXTRAHALFBRITE_KEY 0x00000080UL
+#endif
+
+BOOL Vt_ObtainsPens(ULONG depth, ULONG modeId, UWORD gfxVersion)
+{
+    if (gfxVersion < 39 || depth <= 4)
+        return FALSE;
+    return (modeId & (HAM_KEY | EXTRAHALFBRITE_KEY)) == 0;
+}

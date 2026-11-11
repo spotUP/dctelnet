@@ -31,7 +31,9 @@ BOOL Palette_OwnPens(ULONG state, UWORD depth, UBYTE pens[16]);
  * UI; with ui (not NULL) those pens take the Workbench's own UI colours,
  * ui[pen] (0x00RRGGBB: background, shadow, shine, fill), so the dialogs look
  * like the Workbench's -- and ANSI white, black, bright white and bright blue
- * show in them. Pens of 32+ colours are never shared: ui changes nothing. */
+ * show in them. Pens of 32+ colours are never shared: ui changes nothing.
+ * ui whose four colours are not all different (a flat Workbench) is not
+ * taken: the ANSI palette stays. */
 #define PALETTE_UI_SHARED 4
 void Palette_ScreenColours(const UWORD palette[16], const UBYTE pens[16], const ULONG ui[PALETTE_UI_SHARED],
                            ULONG out[16]);

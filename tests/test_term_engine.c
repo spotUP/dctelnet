@@ -56,7 +56,7 @@ static void call(const char *fmt, long a, long b, long c, long d, long e)
 
 /* The screen's LayerInfo, as Intuition sees it: the drawing that went into
  * the planes while it was not held, and the planes as they were given back. */
-static int layerLocks, bltUnlocked, blitBusy, unlockedBusy;
+static int layerLocks, bltUnlocked, blitBusy, unlockedBusy, drawsUnlocked;
 static UBYTE atUnlock[4][BPR * H];
 static void WaitBlit(void) { blitBusy = 0; }
 static void LockLayerInfo(struct Layer_Info *li) { (void)li; layerLocks++; }
@@ -78,18 +78,65 @@ static ULONG GetBitMapAttr(struct BitMap *b, ULONG attr)
 #define OBP_Precision 1
 #define PRECISION_EXACT 0
 #define OBP_FailIfBad 2
-static int obtainCalls, releaseCalls, obtainFail;
+#define PRECISION_IMAGE 1
+static int obtainCalls, releaseCalls, obtainFail, obtainExactFail, obtainNearCalls;
 static ULONG obtainR, obtainG, obtainB;
 static LONG obtainTags[4];
+/* A colour map with a limited number of free pens: obtainBudget (-1: unlimited) exact pens may be held at once;
+ * past it an exact request fails and a nearest one answers the closest pen held (never an exclusive one). The RGB
+ * of every pen handed out is kept (obtainRgb) so a test can read a picture back as colours. */
+static int obtainBudget = -1, obtainHeld;
+static unsigned long obtainRgb[256];
+static unsigned char obtainLive[256];
 static LONG ObtainBestPen(struct ColorMap *cm, ULONG r, ULONG g, ULONG b, ...)
 {
+    va_list ap;
+    LONG exact, pen;
+    unsigned long want = ((r >> 24) << 16) | ((g >> 24) << 8) | (b >> 24);
+
     (void)cm;
     obtainR = r; obtainG = g; obtainB = b;
-    obtainTags[0] = OBP_Precision; obtainTags[1] = PRECISION_EXACT; obtainTags[2] = OBP_FailIfBad; obtainTags[3] = 1;
+    va_start(ap, b);                    /* the tags the caller passed: OBP_Precision p, OBP_FailIfBad f */
+    obtainTags[0] = va_arg(ap, LONG); obtainTags[1] = va_arg(ap, LONG);
+    obtainTags[2] = va_arg(ap, LONG); obtainTags[3] = va_arg(ap, LONG);
+    va_end(ap);
+    exact = obtainTags[1] == PRECISION_EXACT;
     obtainCalls++;
-    return obtainFail ? -1 : 50 + (obtainCalls - 1) % 200;
+    if (!exact)
+        obtainNearCalls++;
+    if (obtainFail || (exact && obtainExactFail))
+        return -1;
+    if (obtainBudget >= 0 && obtainHeld >= obtainBudget) {
+        long best = -1, bd = 0;
+        int i;
+
+        if (exact)
+            return -1;
+        for (i = 0; i < 256; i++)
+            if (obtainLive[i]) {
+                long dr = (long)((want >> 16) & 255) - (long)((obtainRgb[i] >> 16) & 255);
+                long dg = (long)((want >> 8) & 255) - (long)((obtainRgb[i] >> 8) & 255);
+                long db = (long)(want & 255) - (long)(obtainRgb[i] & 255);
+                long d = dr * dr + dg * dg + db * db;
+                if (best < 0 || d < bd) { best = i; bd = d; }
+            }
+        return best < 0 ? 0 : best;
+    }
+    pen = 50 + (obtainCalls - 1) % 200;
+    obtainRgb[pen] = want;
+    obtainLive[pen] = 1;
+    obtainHeld++;
+    return pen;
 }
-static void ReleasePen(struct ColorMap *cm, ULONG pen) { (void)cm; (void)pen; releaseCalls++; }
+static void ReleasePen(struct ColorMap *cm, ULONG pen)
+{
+    (void)cm;
+    releaseCalls++;
+    if (pen < 256 && obtainLive[pen]) {
+        obtainLive[pen] = 0;
+        obtainHeld--;
+    }
+}
 static void SetFont(struct RastPort *rp, struct TextFont *tf) { rp->Font = tf; }
 static void SetAPen(struct RastPort *rp, ULONG pen) { rp->FgPen = (UBYTE)pen; }
 static void SetBPen(struct RastPort *rp, ULONG pen) { rp->BgPen = (UBYTE)pen; }
@@ -106,6 +153,8 @@ static void Text(struct RastPort *rp, STRPTR s, ULONG n)
 static UBYTE chunkyFb[FB_W * FB_H];     /* the last pen written at each pixel, 0xFF where none */
 static void RectFill(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
 {
+    if (!layerLocks)
+        drawsUnlocked++;
     if (rp->DrawMode == COMPLEMENT)
         call("Complement(%ld,%ld,%ld,%ld mask%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)rp->Mask);
     else
@@ -125,6 +174,8 @@ static void WriteChunkyPixels(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LO
 {
     LONG x, y, stride = mod ? mod : x1 - x0 + 1;
     (void)rp;
+    if (!layerLocks)
+        drawsUnlocked++;
     chunkyCalls++;
     for (y = y0; y <= y1; y++)
         for (x = x0; x <= x1; x++)
@@ -149,10 +200,10 @@ static void FreeBitMap(struct BitMap *b) { (void)b; }
 struct Device { int unused; };
 struct EClockVal { ULONG ev_hi, ev_lo; };
 struct Device *TimerBase;
-static ULONG eclockNow;
+static ULONG eclockNow, eclockStep = 7;
 static ULONG ReadEClock(struct EClockVal *e)
 {
-    eclockNow += 7;
+    eclockNow += eclockStep;
     e->ev_hi = 0;
     e->ev_lo = eclockNow;
     return 709379;
@@ -174,8 +225,10 @@ static LONG BltBitMap(struct BitMap *s, WORD sx, WORD sy, struct BitMap *d, WORD
 
     (void)tmp;
     blitBusy = 1;
-    if (!layerLocks)
+    if (!layerLocks) {
         bltUnlocked++;
+        drawsUnlocked++;
+    }
     for (p = 0; p < 4; p++) {
         if (!(mask & (1 << p)))
             continue;
@@ -280,7 +333,8 @@ struct DisplayInfo { struct { UWORD x, y; } Resolution; };
 #define INVALID_ID (~0UL)
 static int modeRx, modeRy;
 static int aspectCalls, aspectRx, aspectRy;
-static ULONG GetVPModeID(struct ViewPort *vp) { (void)vp; return 0x29000UL; }
+static ULONG testModeId = 0x29000UL;
+static ULONG GetVPModeID(struct ViewPort *vp) { (void)vp; return testModeId; }
 static long GetDisplayInfoData(void *h, UBYTE *buf, ULONG size, ULONG tag, ULONG id)
 {
     struct DisplayInfo *di = (struct DisplayInfo *)buf;
@@ -339,6 +393,33 @@ static void VtRipScreenChanged(const struct PrefsStruct *before)
 #include "site_prefs.h"
 struct SiteHandChanges handChanges;     /* DCTelnet.c's record of temporary changes */
 ULONG sessionSettingsId;                /* 0: a quick connect, no entry session */
+/* exec.library memory for the picture pens (AllocVec / FreeVec) */
+#include <stdlib.h>
+#define MEMF_ANY 0
+#define MEMF_CLEAR 1
+static int vecLive;
+static void *AllocVec(unsigned long n, unsigned long f)
+{
+    vecLive++;
+    return (f & MEMF_CLEAR) ? calloc(1, n) : malloc(n);
+}
+static void FreeVec(void *p) { vecLive--; free(p); }
+/* RIP-COLOUR: DCTelnet.c's pen loading, as a recording stub: fakePen[n] is the colour the screen's pen n holds. */
+static ULONG fakePen[256];
+static int ripShowCalls, ripRestoreCalls;
+static BOOL VtRipShowColours(const ULONG rgb[16])
+{
+    int i;
+
+    ripShowCalls++;
+    for (i = 0; i < 16; i++)
+        fakePen[term_pen_map[i]] = rgb[i];      /* the real one writes pen i (ansiColourPens[i] on own pens) */
+    return TRUE;
+}
+static void VtRipRestoreColours(void)
+{
+    ripRestoreCalls++;
+}
 #include "../src/vtbuiltin.c"
 #undef vt_write
 #undef vt_flush
@@ -432,7 +513,7 @@ static void setup(void)
     menuLayer.back = &winLayer;
     menuLayer.bounds.MinX = 0; menuLayer.bounds.MinY = 0;
     menuLayer.bounds.MaxX = 199; menuLayer.bounds.MaxY = 40;
-    layerLocks = bltUnlocked = blitBusy = unlockedBusy = sentLocked = menuOnSend = menuOnParse = 0;
+    layerLocks = bltUnlocked = drawsUnlocked = blitBusy = unlockedBusy = sentLocked = menuOnSend = menuOnParse = 0;
     assert(term_init_area(&screen, &winRp, 0, TOP, 0, TOP, W, H - TOP, &font) == 0);
     calls[0] = 0;
 }
@@ -1041,7 +1122,10 @@ static void xterm_begin_on(UBYTE depth, ULONG flags)
     bm.Depth = depth;
     bitmapFlags = flags;
     assert(term_init_area(&screen, &winRp, 0, TOP, 0, TOP, W, H - TOP, &font) == 0);
-    obtainCalls = releaseCalls = obtainFail = 0;
+    obtainCalls = releaseCalls = obtainFail = obtainExactFail = obtainNearCalls = 0;
+    obtainBudget = -1;
+    obtainHeld = 0;
+    memset(obtainLive, 0, sizeof(obtainLive));
     memset(&prefs, 0, sizeof(prefs));
     prefs.State = APP_RENDERER_BUILTIN;
     prefs.TermType = TERMTYPE_UNIX;
@@ -1346,10 +1430,115 @@ static void test_ma2_9_a_failed_obtain_falls_back_to_the_16_pen_answer(void)
     xterm_begin_on(24, 0);
     obtainFail = 1;
     vt_put("\x1b[38;2;255;0;0mX");
-    assert(obtainCalls == 1 && probes == 1);
+    assert(obtainCalls == 2 && obtainNearCalls == 1 && probes == 1);   /* exact, then the nearest */
     assert(probe[0].fg == Vt_PenFor(VT_COLOR_RGB | 0xFF0000UL, prefs.AnsiColors));
     tc_end();
     assert(releaseCalls == 0);
+}
+
+/* AGA / RTG palette screens (8 planes): the same pens as true colour; a full
+ * colour map answers the nearest pen (vtcon pen_rule.h), still one release. */
+static void test_aga_pens_text_and_picture_on_an_8_plane_screen(void)
+{
+    char want[64];
+    UBYTE pen;
+
+    xterm_begin_on(8, 0);
+    assert(vtTrueColour);
+    vt_put("\x1b[38;5;196mA");
+    assert(obtainCalls == 1 && probe[0].fg == 16 && term_pen_map[16] == 50);
+    /* the picture: the engine's palette colour gets a pen of its own through VtPenFor */
+    chunkyCalls = 0;
+    vtImgRuns = 0;
+    vt_put("\x1b[H");                    /* the picture goes at the cursor: home */
+    vt_put("\033_Gf=24,s=2,v=2,a=T;/wAA/wAA/wAA/wAA\033\\");
+    assert(vtImgRuns == 2 && chunkyCalls == 2);
+    pen = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | 0xFF0000UL))];
+    assert(pen == 50);                  /* FF0000 is the cell's pen from the text above, cached */
+    snprintf(want, sizeof(want), "Chunky(%d,%d,%d,%d pen%d)", TERM_PX(0), TERM_PY(0), TERM_PX(0) + 1, TERM_PY(0), pen);
+    assert(strstr(calls, want));
+    tc_end();
+    assert(releaseCalls == obtainCalls);        /* no pen leak on close */
+    assert(vtTcN == 0);
+}
+
+static void test_aga_full_colour_map_takes_the_nearest_pen(void)
+{
+    xterm_begin_on(8, 0);
+    obtainExactFail = 1;
+    vt_put("\x1b[38;5;196mA");
+    assert(obtainCalls == 2 && obtainNearCalls == 1);
+    assert(probe[0].fg == 16 && term_pen_map[16] == 51);
+    tc_end();
+    assert(releaseCalls == 1);
+}
+
+static void test_aga_5_to_7_planes_get_pens_of_their_own(void)
+{
+    UBYTE d;
+
+    /* the pure rule: depth, display mode, graphics.library version */
+    assert(!Vt_ObtainsPens(4, 0x29000UL, 40));
+    assert(Vt_ObtainsPens(5, 0x29000UL, 40) && Vt_ObtainsPens(7, 0x29000UL, 40));
+    assert(Vt_ObtainsPens(8, 0x29000UL, 40) && Vt_ObtainsPens(24, 0x29000UL, 40));
+    assert(!Vt_ObtainsPens(7, 0x29000UL, 39 - 1));          /* pre-V39: no ObtainBestPen */
+    assert(!Vt_ObtainsPens(6, 0x800UL, 40));                /* HAM */
+    assert(!Vt_ObtainsPens(6, 0x80UL, 40));                 /* Extra Half-Brite */
+    for (d = 5; d <= 7; d++) {
+        xterm_begin_on(d, 0);
+        assert(vtTrueColour);
+        vt_put("\x1b[38;5;196mA");
+        assert(obtainCalls >= 1);
+        assert(probe[0].fg >= 16);
+        tc_end();
+        assert(releaseCalls == obtainCalls);
+    }
+}
+
+static void test_aga_7_plane_picture_colour_maps_to_a_pen_and_survives_a_switch(void)
+{
+    xterm_begin_on(7, 0);
+    chunkyCalls = 0;
+    vtImgRuns = 0;
+    vt_put("\x1b[H");
+    vt_put("\033_Gf=24,s=2,v=2,a=T;/wAA/wAA/wAA/wAA\033\\");
+    assert(vtImgRuns == 2);
+    assert(term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | 0xFF0000UL))] >= 16);
+    assert(obtainCalls >= 1);
+    /* 8 -> 7 planes: the new screen keeps pens of its own */
+    xterm_begin_on(8, 0);
+    vt_put("\x1b[38;5;196mA");
+    assert(vtTrueColour && probe[0].fg >= 16);
+    VtReleasePens();
+    bm.Depth = 7;
+    assert(VtOpen() == 0);
+    assert(vtTrueColour);
+    tc_end();
+}
+
+static void test_aga_4_planes_ham_ehb_and_old_graphics_never_ask_for_a_pen(void)
+{
+    xterm_begin_on(4, 0);
+    vt_put("\x1b[38;5;196mA");
+    assert(!vtTrueColour && obtainCalls == 0);
+    tc_end();
+    testModeId = 0x800UL;                                   /* HAM */
+    xterm_begin_on(6, 0);
+    vt_put("\x1b[38;5;196mA");
+    assert(!vtTrueColour && obtainCalls == 0);
+    tc_end();
+    testModeId = 0x80UL;                                    /* Extra Half-Brite */
+    xterm_begin_on(6, 0);
+    vt_put("\x1b[38;5;196mA");
+    assert(!vtTrueColour && obtainCalls == 0);
+    tc_end();
+    testModeId = 0x29000UL;
+    gfx.LibNode.lib_Version = 38;
+    xterm_begin_on(7, 0);
+    vt_put("\x1b[38;5;196mA");
+    assert(!vtTrueColour && obtainCalls == 0);
+    tc_end();
+    gfx.LibNode.lib_Version = 40;
 }
 
 /* ---- MA3: mouse, title, bracketed paste through the real entry points ---- */
@@ -1821,6 +2010,302 @@ static void test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answer
     assert(vt_kitty_placed(vtTerm) == 1);
 }
 
+/* KG-32: a kitty picture on a 5-plane palette screen with 12 free pens (pens 0-19 are DCTelnet's, PEN_EXCLUSIVE).
+ * Handing the picture's palette out first-come showed the colours of its top rows only; the shared picker
+ * (pic_pens.h) gives the 12 pens to the colours covering most of the picture and dithers every pixel onto
+ * {the 16 ANSI pens + those 12}. Driven through VtWrite. Sentinels: vtPicPicks (pp_pick ran for the picture),
+ * vtImgRuns (the chunky writes). SMPTE 75% bars, 16 x 16 pixels a bar: the mean colour of each bar, read back from
+ * the pens written, is within BAR_ERR (per channel, 0-255) of the bar's colour. */
+#define KG32_W 128
+#define KG32_H 16
+#define KG32_BAR_ERR 8
+static void kg32_b64(char *out, const unsigned char *in, int n)
+{
+    static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int i;
+
+    for (i = 0; i < n; i += 3) {
+        unsigned long v = (unsigned long)in[i] << 16 | (i + 1 < n ? (unsigned long)in[i + 1] << 8 : 0) |
+                          (i + 2 < n ? in[i + 2] : 0);
+        *out++ = t[(v >> 18) & 63];
+        *out++ = t[(v >> 12) & 63];
+        *out++ = i + 1 < n ? t[(v >> 6) & 63] : '=';
+        *out++ = i + 2 < n ? t[v & 63] : '=';
+    }
+    *out = 0;
+}
+
+static const unsigned char kg32_bars[8][3] = {
+    {191, 191, 191}, {191, 191, 0}, {0, 191, 191}, {0, 191, 0}, {191, 0, 191}, {191, 0, 0}, {0, 0, 191}, {0, 0, 0}
+};
+
+/* send a KG32_W x h picture as id (24-bit RGB, transmitted and shown at the cursor, chunked) */
+static void kg32_send_rgb(int id, const unsigned char *raw, int h)
+{
+    static char b64[KG32_W * 32 * 4 + 16], msg[4200];
+    int off, len;
+
+    kg32_b64(b64, raw, KG32_W * h * 3);
+    len = (int)strlen(b64);
+    for (off = 0; off < len; off += 4000) {
+        int n = len - off < 4000 ? len - off : 4000, more = off + n < len;
+        if (off == 0)
+            snprintf(msg, sizeof(msg), "\033_Gf=24,s=%d,v=%d,i=%d,a=T,m=%d;", KG32_W, h, id, more);
+        else
+            snprintf(msg, sizeof(msg), "\033_Gm=%d;", more);
+        {
+            size_t h = strlen(msg);
+
+            memcpy(msg + h, b64 + off, (size_t)n);
+            memcpy(msg + h + n, "\033\\", 3);
+            VtWrite((const UBYTE *)msg, (long)(h + (size_t)n + 2));
+        }
+    }
+}
+
+/* send the bars as picture id */
+static void kg32_send(int id)
+{
+    static unsigned char raw[KG32_W * KG32_H * 3];
+    int x, y;
+
+    for (y = 0; y < KG32_H; y++)
+        for (x = 0; x < KG32_W; x++)
+            memcpy(raw + (y * KG32_W + x) * 3, kg32_bars[x / 16], 3);
+    kg32_send_rgb(id, raw, KG32_H);
+}
+
+static unsigned long kg32_pen_rgb(UBYTE pen)
+{
+    UWORD c;
+
+    if (pen < 16) {
+        c = prefs.AnsiColors[pen];
+        return ((unsigned long)((c >> 8) & 15) * 17UL << 16) | ((unsigned long)((c >> 4) & 15) * 17UL << 8) |
+               (unsigned long)(c & 15) * 17UL;
+    }
+    assert(obtainLive[pen]);            /* a pen the picture shows is one the screen still holds */
+    return obtainRgb[pen];
+}
+
+static int kg32_worst_bar_error(void)
+{
+    int bar, x, y, c, worst = 0;
+
+    for (bar = 0; bar < 8; bar++) {
+        long sum[3] = {0, 0, 0};
+
+        for (y = 0; y < KG32_H; y++)
+            for (x = bar * 16; x < bar * 16 + 16; x++) {
+                unsigned long rgb = kg32_pen_rgb(chunkyFb[(TERM_PY(0) + y) * FB_W + TERM_PX(0) + x]);
+                sum[0] += (rgb >> 16) & 255;
+                sum[1] += (rgb >> 8) & 255;
+                sum[2] += rgb & 255;
+            }
+        for (c = 0; c < 3; c++) {
+            int e = (int)(sum[c] / 256) - kg32_bars[bar][c];
+            if (e < 0)
+                e = -e;
+            if (e > worst)
+                worst = e;
+        }
+    }
+    return worst;
+}
+
+static void test_kg32_a_picture_on_a_5_plane_screen_with_12_free_pens_keeps_its_colours(void)
+{
+    int err;
+    unsigned placed0;
+
+    xterm_begin_on(5, 0);
+    placed0 = (unsigned)vt_kitty_placed(vtTerm);
+    assert(vtTrueColour && vtPicPens);
+    obtainBudget = 12;                          /* the colour map's free pens */
+    memset(chunkyFb, 0, sizeof(chunkyFb));
+    chunkyCalls = 0;
+    vtImgRuns = 0;
+    vtPicPicks = 0;
+    vt_put("\x1b[H");
+    kg32_send(1);
+    assert(vt_kitty_placed(vtTerm) == placed0 + 1);
+    assert(vtPicPicks == 1);                    /* the shared picker ran for it */
+    assert(vtImgRuns > 0 && chunkyCalls > 0);
+    assert(obtainHeld <= 12 + vtTcN);
+    err = kg32_worst_bar_error();
+    printf("kg32: worst bar mean error %d of 255 (bound %d), pens held %d\n", err, KG32_BAR_ERR, obtainHeld);
+    assert(err <= KG32_BAR_ERR);
+
+    /* the same id again replaces the picture: the old pens go back, new ones are taken */
+    vt_put("\x1b[H");
+    kg32_send(1);
+    assert(vtPicPicks == 2);
+    assert(obtainHeld <= 12 + vtTcN);
+    assert(kg32_worst_bar_error() <= KG32_BAR_ERR);
+
+    /* delete all pictures: every pen of the set goes back (text pens: none in this test) */
+    vt_put("\033_Ga=d,d=A\033\\");
+    VtRedraw();
+    assert(obtainHeld == vtTcN);                /* only the text cache holds pens now */
+    assert(vecLive == 0);
+
+    /* the next picture gets the pens again */
+    vt_put("\x1b[H");
+    kg32_send(2);
+    assert(vtPicPicks == 3 && obtainHeld > vtTcN && obtainHeld <= 12 + vtTcN);
+    assert(kg32_worst_bar_error() <= KG32_BAR_ERR);
+    tc_end();
+    assert(obtainHeld == 0 && vecLive == 0);    /* closing the screen gives them back */
+}
+
+/* The owner's bug: a many-colour picture on a 5-plane screen looked like 16 colours because the pens went to the
+ * first palette colours met, i.e. those of the top rows. Here the top quarter holds 16 narrow bars of unrelated
+ * colours and the rest a smooth ramp of muted colours of more than 12 distinct colours; the ramp must keep its colours.
+ * The colour assertion comes before every sentinel so a reverted picker fails on the colours. */
+#define KG32M_H 32
+#define KG32M_TOP 8
+#define KG32M_ERR 25
+
+static void kg32m_rgb(int x, unsigned char *c)
+{
+    /* three phase-shifted waves: muted mid-tones, far from the 16 ANSI colours, every column its own colour */
+    static const unsigned char r[3] = {0, 85, 170};
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        int ph = (x * 3 + r[i]) % 256, v = ph < 128 ? ph : 255 - ph;      /* triangle 0..127 */
+
+        c[i] = (unsigned char)(40 + v * 3 / 2);
+    }
+}
+
+static void test_kg32_a_many_colour_picture_with_few_colours_on_top_keeps_its_lower_colours(void)
+{
+    static unsigned char raw[KG32_W * KG32M_H * 3];
+    static const unsigned char top[16][3] = {
+        {255, 128, 0}, {128, 255, 0}, {0, 255, 128}, {0, 128, 255}, {128, 0, 255}, {255, 0, 128}, {90, 40, 20}, {20, 90, 40},
+        {40, 20, 90}, {200, 200, 100}, {100, 200, 200}, {200, 100, 200}, {240, 240, 240}, {60, 60, 60}, {160, 80, 80}, {80, 160, 80}};
+    int x, y, c;
+    long sum = 0;
+    int err;
+
+    for (y = 0; y < KG32M_H; y++)
+        for (x = 0; x < KG32_W; x++) {
+            if (y < KG32M_TOP)
+                memcpy(raw + (y * KG32_W + x) * 3, top[x / 8], 3);
+            else
+                kg32m_rgb(x, raw + (y * KG32_W + x) * 3);
+        }
+    xterm_begin_on(5, 0);
+    obtainBudget = 12;
+    memset(chunkyFb, 0, sizeof(chunkyFb));
+    vtPicPicks = 0;
+    vt_put("\x1b[H");
+    kg32_send_rgb(1, raw, KG32M_H);
+    for (y = KG32M_TOP; y < KG32M_H; y++)
+        for (x = 0; x < KG32_W; x++) {
+            unsigned long rgb = kg32_pen_rgb(chunkyFb[(TERM_PY(0) + y) * FB_W + TERM_PX(0) + x]);
+            unsigned char want[3];
+
+            kg32m_rgb(x, want);
+            for (c = 0; c < 3; c++) {
+                int e = (int)((rgb >> (16 - 8 * c)) & 255) - want[c];
+                sum += e < 0 ? -e : e;
+            }
+        }
+    err = (int)(sum / ((long)(KG32M_H - KG32M_TOP) * KG32_W * 3));
+    printf("kg32m: lower region mean error %d of 255 (bound %d), pens held %d\n", err, KG32M_ERR, obtainHeld);
+    assert(err <= KG32M_ERR);
+    assert(vtPicPens && vtPicPicks == 1);       /* the shared picker ran for it */
+    assert(obtainHeld <= 12 + vtTcN);
+    tc_end();
+}
+
+/* The same on a SIXEL picture (own palette registers, no RGB copy): 36 rows in 6 bands of 6. The top two bands hold
+ * 16 registers in 8-pixel stripes, the lower four a muted ramp with every column its own register (128 registers,
+ * far more than the 12 free pens). Handing the registers out first-come left the ramp on the nearest ANSI pens; the
+ * shared picker (VtSixNeedsPicker, VtPicMake indexed) gives the 12 pens to the registers covering most of the
+ * picture and dithers every register onto {ANSI + those pens}. The colour assertion comes before the sentinels, so
+ * a reverted mapping fails on colour. */
+#define SXL_TOP 12                      /* two 6-row bands of the 16 top colours */
+#define SXL_H (SXL_TOP + 24)            /* then four 6-row bands of the ramp */
+#define SXL_ERR 25
+static void sxl_want(int x, unsigned char *c)
+{
+    unsigned char raw[3];
+    int i;
+
+    kg32m_rgb(x, raw);
+    for (i = 0; i < 3; i++)
+        c[i] = (unsigned char)(((raw[i] * 100 / 255) * 255 + 50) / 100);   /* what the engine makes of 0-100 percent */
+}
+
+/* append a sixel run: x blank columns, then w columns of all six bits, register reg */
+static int sxl_run(char *o, int reg, int x, int w)
+{
+    int n = sprintf(o, "#%d", reg);
+
+    if (x > 0)
+        n += sprintf(o + n, "!%d?", x);
+    return n + sprintf(o + n, "!%d~$", w);
+}
+
+static void test_sixel_32_a_many_register_picture_with_few_colours_on_top_keeps_its_lower_colours(void)
+{
+    static const unsigned char top[16][3] = {
+        {255, 128, 0}, {128, 255, 0}, {0, 255, 128}, {0, 128, 255}, {128, 0, 255}, {255, 0, 128}, {90, 40, 20}, {20, 90, 40},
+        {40, 20, 90}, {200, 200, 100}, {100, 200, 200}, {200, 100, 200}, {240, 240, 240}, {60, 60, 60}, {160, 80, 80}, {80, 160, 80}};
+    static char sx[24000];
+    int x, y, c, n, b, err;
+    long sum = 0;
+
+    n = sprintf(sx, "\033P9q");      /* P1 9: 1:1 aspect, one sixel row is one pixel row (the default 2:1 doubles) */
+    for (x = 0; x < 16; x++)
+        n += sprintf(sx + n, "#%d;2;%d;%d;%d", x + 1, top[x][0] * 100 / 255, top[x][1] * 100 / 255, top[x][2] * 100 / 255);
+    for (x = 0; x < KG32_W; x++) {
+        unsigned char raw[3];
+
+        kg32m_rgb(x, raw);
+        n += sprintf(sx + n, "#%d;2;%d;%d;%d", 17 + x, raw[0] * 100 / 255, raw[1] * 100 / 255, raw[2] * 100 / 255);
+    }
+    for (b = 0; b < 2; b++) {
+        for (x = 0; x < 16; x++)
+            n += sxl_run(sx + n, x + 1, x * 8, 8);
+        n += sprintf(sx + n, "-");
+    }
+    for (b = 0; b < 4; b++) {
+        for (x = 0; x < KG32_W; x++)
+            n += sxl_run(sx + n, 17 + x, x, 1);
+        n += sprintf(sx + n, b < 3 ? "-" : "");
+    }
+    n += sprintf(sx + n, "\033\\");
+    assert(n < (int)sizeof(sx));
+    xterm_begin_on(5, 0);
+    obtainBudget = 12;
+    memset(chunkyFb, 0, sizeof(chunkyFb));
+    vtPicPicks = 0;
+    vt_put("\x1b[H");
+    VtWrite((const UBYTE *)sx, (long)n);
+    for (y = SXL_TOP; y < SXL_H; y++)
+        for (x = 0; x < KG32_W; x++) {
+            unsigned long rgb = kg32_pen_rgb(chunkyFb[(TERM_PY(0) + y) * FB_W + TERM_PX(0) + x]);
+            unsigned char want[3];
+
+            sxl_want(x, want);
+            for (c = 0; c < 3; c++) {
+                int e = (int)((rgb >> (16 - 8 * c)) & 255) - want[c];
+                sum += e < 0 ? -e : e;
+            }
+        }
+    err = (int)(sum / ((long)(SXL_H - SXL_TOP) * KG32_W * 3));
+    printf("sixel32: lower region mean error %d of 255 (bound %d), pens held %d\n", err, SXL_ERR, obtainHeld);
+    assert(err <= SXL_ERR);
+    assert(vtPicPens && vtPicPicks == 1);       /* the shared picker ran for it */
+    assert(obtainHeld <= 12 + vtTcN);
+    tc_end();
+    assert(obtainHeld == 0 && vecLive == 0);    /* the picture's pens go back with the screen */
+}
+
 /* KG-10: VtOpen hands the engine the screen mode's Resolution as the pixel
  * aspect (PAL hires 22:44 style), and square when the mode is unknown; a
  * display reopen on another mode updates it. */
@@ -1869,7 +2354,8 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
     assert(v.kitty == 0 && v.z < 0 && v.w == 640 && v.h == 350);
     assert(v.pal[9] != 0 && v.pix[50 * 640 + 50] == 9 && v.pix[200 * 640 + 150] == 0);
-    barpen = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[9] & 0xFFFFFFUL)))];
+    barpen = term_pen_map[9];                       /* RIP-COLOUR: index i is pen i, holding the RIP colour */
+    assert(fakePen[barpen] == (v.pal[9] & 0xFFFFFFUL));
     bgpen = term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
     assert(chunkyFb[(TERM_PY(0) + 50) * FB_W + TERM_PX(0) + 50] == barpen);     /* inside the bar */
     assert(chunkyFb[(TERM_PY(0) + 200) * FB_W + TERM_PX(0) + 150] == bgpen);    /* index 0: painted, not skipped */
@@ -1895,13 +2381,82 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     assert(VtEClockUs(5, 0, 709379UL) == 0 && VtEClockUs(5, 1, 0) == 0);
 }
 
+/* RIP-COLOUR: RIP colour i is exactly the EGA colour whatever the user's ANSI palette is. The screen's pens
+ * take the RIP palette and index i draws with pen i (SyncTERM does the same). With a reversed ANSI palette the
+ * nearest-pen match put 0x0D on a pen that is not 0xFF55FF. vtRipPensLoads is the sentinel that the load ran. */
+static void test_rip_colour_index_is_the_exact_ega_colour_with_a_custom_ansi_palette(void)
+{
+    UWORD saved[16];
+    int i, pen13, pen1;
+    unsigned long loads;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    memcpy(saved, prefs.AnsiColors, sizeof saved);
+    for (i = 0; i < 16; i++)
+        prefs.AnsiColors[i] = saved[15 - i];    /* a user palette: nothing where the default has it */
+    memset(fakePen, 0, sizeof fakePen);
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    loads = vtRipPensLoads;
+    vtImgSerial = -1;
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[2!\r\n");
+    vt_put("!|S010D|B0A0A2S2S|S0101|B5K0A8C2S\r\n");   /* colour 0D: (10,10)-(100,100); colour 01: (200,10)-(300,100) */
+    assert(vtRipPensLoads > loads);
+    pen13 = chunkyFb[(TERM_PY(0) + 50) * FB_W + TERM_PX(0) + 50];
+    pen1 = chunkyFb[(TERM_PY(0) + 50) * FB_W + TERM_PX(0) + 250];
+    assert(pen13 == term_pen_map[13] && pen1 == term_pen_map[1]);
+    assert(fakePen[pen13] == 0xFF55FFUL);
+    assert(fakePen[pen1] == 0x0000AAUL);
+    memcpy(prefs.AnsiColors, saved, sizeof saved);
+}
+
+/* RIP-SLOW: one write of many commands is one flush, not one per command (vtRipFlushes is the sentinel); a
+ * buffer that takes longer than the cap still flushes on the way. */
+static void test_rip_a_write_of_many_commands_flushes_once(void)
+{
+    static char buf[2048];
+    int i, n = 0, before;
+    unsigned long f0;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[2!\r\n");
+    n += sprintf(buf + n, "!|S0109");
+    for (i = 0; i < 40; i++)
+        n += sprintf(buf + n, "|B%02d%02d%02d%02d", i % 30, i % 30, i % 30 + 5, i % 30 + 5);
+    n += sprintf(buf + n, "\r\n");
+    f0 = vtRipFlushes;
+    before = flushes;
+    VtWrite((const UBYTE *)buf, n);
+    assert(vt_rip_commands(vtTerm) >= 40);
+    assert(vtRipFlushes - f0 == 1);                 /* was 41: one per command */
+    assert(flushes - before <= 2);
+    /* the time cap: a clock that jumps 150 ms per command flushes more than once, but not per command */
+    {
+        static struct Device timer;
+        extern struct Device *TimerBase;
+
+        TimerBase = &timer;
+        f0 = vtRipFlushes;
+        eclockStep = 709379UL * 150 / 1000;
+        VtWrite((const UBYTE *)buf, n);
+        eclockStep = 7;
+        TimerBase = NULL;
+        assert(vtRipFlushes - f0 > 2);
+    }
+}
+
 /* RIP palette entry 0 is a real colour: set non-black, the canvas pixels of
  * index 0 draw with that colour's pen, not the default background pen (only a
  * sixel's index 0 means unset). */
 static void test_rip_index_0_is_the_palette_colour_not_the_background(void)
 {
     vt_image_view v;
-    UBYTE pen0, bgpen;
+    UBYTE pen0;
 
     xterm_begin();
     vt_put("\033c\033[2J");
@@ -1913,9 +2468,8 @@ static void test_rip_index_0_is_the_palette_colour_not_the_background(void)
     assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
     assert(v.kitty == 0 && v.bg0 == 0 && v.pix[200 * 640 + 150] == 0);
     assert((v.pal[0] & 0xFFFFFFUL) != 0);
-    pen0 = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[0] & 0xFFFFFFUL)))];
-    bgpen = term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
-    assert(pen0 != bgpen);
+    pen0 = term_pen_map[0];                         /* RIP-COLOUR: pen 0 holds the RIP colour 0 (0xAA0000) */
+    assert(fakePen[pen0] == 0xAA0000UL);
     assert(chunkyFb[(TERM_PY(0) + 200) * FB_W + TERM_PX(0) + 150] == pen0);
 }
 
@@ -2037,6 +2591,288 @@ static void test_rip_h3_the_ripscrip_preference_reaches_the_engine(void)
     images = vt_images(vtTerm);
     vt_put(ripLine);
     assert(vt_images(vtTerm) == images);
+}
+
+/* RIP bulletin bugs (rip-bull-bugs): a BBS bulletin sends many RIP commands in a row. */
+
+/* 1. Flicker: a RIP command repaints what it changed (vt_rip_take_dirty), not the whole canvas, and the text
+ * cells under the opaque canvas are not blanked. A small bar after a full canvas blits a few rows only. */
+static void test_rip_bull_1_a_small_command_blits_only_its_dirty_rows(void)
+{
+    unsigned long full, small;
+    UBYTE barpen;
+    vt_image_view v;
+
+    xterm_begin();
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    prefs.RipMode = RIPMODE_ON;
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[2!\r\n");
+    calls[0] = 0;
+    vt_put("!|S0109|B0A0A2S2S\r\n");
+    vtImgRuns = 0;
+    VtDraw(NULL, 0, 0, term_cols, term_rows);
+    full = vtImgRuns;
+    assert(full > 10);                                          /* the whole 350-row canvas */
+
+    vtImgRuns = 0;
+    calls[0] = 0;
+    vt_put("!|S0101|B0A0A141E\r\n");                            /* bar (10,10)-(40,50): 40 rows */
+    small = vtImgRuns;
+    assert(small > 0 && small * 3 < full);                      /* the sentinel: blitted, and not all of it */
+    assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+    barpen = term_pen_map[1];                       /* RIP-COLOUR: index i is pen i */
+    assert(chunkyFb[(TERM_PY(0) + 20) * FB_W + TERM_PX(0) + 20] == barpen);     /* the new bar is on screen */
+    VtClose();
+}
+
+/* 2. #87 colour picker: a picture's pens are keyed on the palette, not the image serial, so a RIP canvas whose
+ * palette stays put is picked once, not once a command. */
+static void rip_bull_bar(int colour, int x0)
+{
+    static const char dig[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    char cmd[64];
+
+    sprintf(cmd, "!|S01%c%c|B%c%c0A%c%c1E\r\n", dig[colour / 36], dig[colour % 36],
+            dig[x0 / 36], dig[x0 % 36], dig[(x0 + 20) / 36], dig[(x0 + 20) % 36]);
+    calls[0] = 0;
+    vt_put(cmd);
+}
+
+/* RIP-COLOUR: the RIP palette is loaded onto the screen's pens once per palette, not once per command. */
+static void test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette(void)
+{
+    unsigned long picks;
+    int i;
+
+    xterm_begin_on(5, 0);
+    obtainBudget = 12;
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[2!\r\n");
+    vtRipPensLoads = 0;
+    for (i = 1; i <= 15; i++)                                   /* 15 colours */
+        rip_bull_bar(i, 10 + 30 * (i - 1));
+    picks = vtRipPensLoads;
+    assert(picks >= 1);                                         /* the sentinel: the RIP palette went onto the pens */
+    for (i = 0; i < 3; i++)
+        rip_bull_bar(15, 10 + 30 * 14);                         /* more commands, the same palette */
+    assert(vtRipPensLoads == picks);                                /* not loaded again */
+    calls[0] = 0;
+    vt_put("!|a0904\r\n");                                      /* palette entry 9 changes */
+    assert(vtRipPensLoads == picks + 1);                            /* a new palette: loaded again */
+    vt_put("!|Q3F3E3D3C3B3A39383736353433323130\r\n");          /* mid-stream |Q: all 16 entries change */
+    assert(vtRipPensLoads == picks + 2);                            /* |Q reloads the pens too */
+    VtClose();
+}
+
+/* 5. B90-HALF: bull90 sets a RIP text window on rows 13-24; the board's RIP_RESET_WINDOWS
+ *    after the pause (auto mode) gives the whole screen back, also when a clear comes first. */
+static void rip_bull_5_feed_bull90(void)
+{
+    static const char *const lines[] = {
+        "\033[2J\033[HGraphics test: RIPscrip\r\n",
+        "!|*|E|Q0001020304050K071K1L1M1N1O1P1Q1R\r\n",
+        "!|S0101|B000K0Z2S\r\n",
+        "!|w000D270O10\r\n",
+        "!|a0104\r\n",
+        "!|#\r\n",
+        "End of RIPscrip test.\r\n",
+        NULL
+    };
+    int i, cx, cy;
+
+    for (i = 0; lines[i]; i++) {
+        calls[0] = 0;
+        vt_put(lines[i]);
+    }
+    calls[0] = 0;
+    vt_put("\033[H");
+    vt_cursor(vtTerm, &cx, &cy);
+    assert(cy == 13);                                           /* the bulletin's text window holds */
+}
+
+static void test_rip_bull_5_a_text_window_ends_with_the_rip_screen(void)
+{
+    int pass, cx, cy;
+
+    for (pass = 0; pass < 3; pass++) {
+        xterm_begin();
+        calls[0] = 0;
+        vt_put("\033c\033[2J");
+        prefs.RipMode = RIPMODE_AUTO;
+        calls[0] = 0;
+        VtApplyRip();
+        rip_bull_5_feed_bull90();
+        calls[0] = 0;
+        vt_put("(Pause)...Space To Resume: \r\033[K");
+        if (pass == 1) {
+            calls[0] = 0;
+            vt_put("\033[2J");                                  /* a clear before the reset */
+        }
+        calls[0] = 0;
+        if (pass == 2)
+            vt_put("\033[2J\033[HWhich Bulletin? \r\n");    /* auto leaves RIP: no RIP command follows */
+        else
+            vt_put("\r\n!|*\r\n");
+        if (pass == 2)
+            assert(vt_rip_active(vtTerm) == 0);                 /* the sentinel: the auto exit ran */
+        calls[0] = 0;
+        vt_put("\033[H");
+        vt_cursor(vtTerm, &cx, &cy);
+        assert(cy == 0);                                        /* the whole screen is back */
+        VtClose();
+    }
+}
+
+/* 6. The screen a door or menu draws after its clear gets all rows. bull90 sets a RIP text window (|w, rows
+ * 13..24: scroll region and origin mode). The bulletins door then redraws in ONE write: SGR, ESC[2J ESC[H,
+ * its logo, with no RIP_RESET_WINDOWS. The auto exit used to run at the end of that write, after the logo
+ * had been laid out inside the window: the owner's half-height screen. It now runs at the clear. Also
+ * with the clear split between two writes. */
+static void test_rip_bull_6_the_screen_after_the_clear_gets_all_rows(void)
+{
+    int pass, cx, cy;
+    unsigned long leaves;
+
+    for (pass = 0; pass < 2; pass++) {
+        xterm_begin();
+        calls[0] = 0;
+        vt_put("\033c\033[2J");
+        prefs.RipMode = RIPMODE_AUTO;
+        calls[0] = 0;
+        VtApplyRip();
+        rip_bull_5_feed_bull90();
+        calls[0] = 0;
+        vt_put("Which Bulletin (?)=List, (Enter)=none? ");
+        assert(vt_rip_active(vtTerm) == 1);
+        leaves = vtRipClsLeaves;
+        calls[0] = 0;
+        if (pass == 0)
+            vt_put("\033[0m\033[37;40m\033[2J\033[HUptown Bulletins");
+        else {
+            vt_put("\033[0m\033[37;40m\033[2");
+            calls[0] = 0;
+            vt_put("J\033[HUptown Bulletins");
+        }
+        assert(vtRipClsLeaves == leaves + 1);                   /* the sentinel: the leave at the clear ran */
+        assert(vt_rip_active(vtTerm) == 0);
+        vt_cursor(vtTerm, &cx, &cy);
+        if (cy != 0 || cx != 16) {
+            printf("FAIL bull_6 pass %d: the logo after the clear ended at row %d col %d, want row 0 col 16\n",
+                   pass, cy, cx);
+            assert(0);
+        }
+        /* a clear that RIP follows in the same write keeps RIP */
+        calls[0] = 0;
+        rip_bull_5_feed_bull90();
+        assert(vt_rip_active(vtTerm) == 1);
+        leaves = vtRipClsLeaves;
+        calls[0] = 0;
+        vt_put("\033[2J\033[H\r\n!|*|c0F\r\n");                 /* RIP starts a line, as the engine wants */
+        assert(vtRipClsLeaves == leaves);
+        assert(vt_rip_active(vtTerm) == 1);
+        VtClose();
+    }
+}
+
+/* 3. Menu RIPscrip Off puts the text screen back at once, not with the next byte from the BBS. */
+static void test_rip_bull_3_menu_rip_off_leaves_rip_without_a_byte(void)
+{
+    xterm_begin();
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    calls[0] = 0;
+    VtApplyRip();
+    assert(vt_rip_active(vtTerm) == 1);
+    ripReopens = 0;
+    prefs.RipMode = RIPMODE_OFF;
+    calls[0] = 0;
+    VtApplyRip();
+    assert(vt_rip_active(vtTerm) == 0);
+    assert(ripReopens >= 1);                                    /* the screen switch back ran, no byte needed */
+    VtClose();
+}
+
+/* 4. Auto: ESC[2J with no RIP command after it leaves RIP and returns to text; with a RIP command it stays. */
+static void test_rip_bull_4_auto_clear_screen_without_rip_returns_to_text(void)
+{
+    xterm_begin();
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO;
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[!");
+    calls[0] = 0;
+    vt_put(ripLine);
+    assert(vt_rip_active(vtTerm) == 1);
+    ripReopens = 0;
+    calls[0] = 0;
+    vt_put("\033[2J");                                          /* a RIP BBS clears with RIP |* , not this */
+    calls[0] = 0;
+    vt_put("Plain menu\r\n");
+    assert(vt_rip_active(vtTerm) == 0);
+    assert(ripReopens >= 1);
+    VtClose();
+
+    xterm_begin();                                              /* the clear split across two writes */
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[!");
+    calls[0] = 0;
+    vt_put(ripLine);
+    calls[0] = 0;
+    vt_put("\033[2");
+    calls[0] = 0;
+    vt_put("JText\r\n");
+    assert(vt_rip_active(vtTerm) == 0);
+    VtClose();
+
+    xterm_begin();                                              /* a RIP command after the clear: stay */
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[!");
+    calls[0] = 0;
+    vt_put(ripLine);
+    calls[0] = 0;
+    vt_put("\033[2J");
+    calls[0] = 0;
+    vt_put(ripLine);
+    assert(vt_rip_active(vtTerm) == 1);
+    VtClose();
+
+    xterm_begin();                                              /* On never leaves */
+    calls[0] = 0;
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    calls[0] = 0;
+    VtApplyRip();
+    calls[0] = 0;
+    vt_put("\033[2J");
+    calls[0] = 0;
+    vt_put("Text\r\n");
+    assert(vt_rip_active(vtTerm) == 1);
+    prefs.RipMode = RIPMODE_AUTO;
+    calls[0] = 0;
+    VtApplyRip();
+    VtClose();
 }
 
 /* The per-site RIPscrip Fonts preference reaches the engine through VtApplyRip:
@@ -2372,8 +3208,8 @@ static void test_rip_h2c_spans_new_path_equals_the_old_algorithm(void)
         }
 }
 
-/* Plan H2c part B: with RIP active a write of several commands draws after each
- * finished command, not once at the end; with RIP off one write is one draw. */
+/* Plan H2c part B (RIP-SLOW: now one flush per write, the time cap aside): with RIP active a write of
+ * several commands is drawn through the sliced path; with RIP off one write is one draw. */
 static void test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite(void)
 {
     static const char pic[] = "!|S0109|B0A0A2S2S\r\n!|S0102|B323264642S\r\n!|c0A\r\n";
@@ -2391,7 +3227,7 @@ static void test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite(void
     onFlushes = flushes;
     assert(parses == 0);                            /* the sliced path, not vt_write */
     assert(vt_rip_commands(vtTerm) - cmds >= 3);
-    assert(onFlushes >= 4);                         /* a flush per finished command, plus the last */
+    assert(onFlushes == 1);                         /* RIP-SLOW: one flush for the write, not one per command */
     assert(layerLocks == 0);                        /* every flush gave the layers back */
     VtClose();
 
@@ -2414,6 +3250,7 @@ static unsigned long rip_auto_oneshot_sum(void)
     FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
     size_t n = fread(buf, 1, sizeof buf, f);
     fclose(f);
+    VtRipEnd();                                     /* the caller's RIP switch ends first: VtApplyRip now watches it */
     xterm_begin();
     vt_put("\033c\033[2J");
     prefs.RipMode = RIPMODE_AUTO; prefs.RipScreen = RIPSCREEN_FIT;
@@ -2481,7 +3318,7 @@ static void test_rip_h2c_c_auto_chunk_rest_is_drawn_per_command_after_the_reopen
     rip_auto_chunk(TRUE, &fl, &held);
     assert(held > 0);
     assert(parses == 0);                                /* sliced path throughout, never vt_write */
-    assert(fl >= 4);                                    /* a flush per finished command after activation */
+    assert(fl >= 1);                                    /* the held rest is drawn (RIP-SLOW: one flush) */
     VtClose();
 }
 
@@ -2492,7 +3329,50 @@ static void test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_as
     rip_auto_chunk(FALSE, &fl, &held);
     assert(held == 0);                                  /* fed inside the same VtWrite */
     assert(parses == 0);
-    assert(fl >= 4);
+    assert(fl >= 1);
+    VtClose();
+}
+
+/* RIP held tail draws only under the layer lock: the rest of an Auto chunk, fed
+ * command by command after RIP turned on mid-chunk, goes into the screen bitmap
+ * like any other draw, so the LayerInfo is held for it (an Intuition menu opened
+ * meanwhile cannot be written over). Both paths: the tail fed inside the same
+ * VtWrite, and the one VtHeldResume feeds after the screen reopen. The draw count
+ * is the sentinel that the tail drew at all. */
+static void held_tail_draws(BOOL reopen)
+{
+    static UBYTE buf[512];
+    FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
+    size_t n;
+
+    assert(f);
+    n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO;
+    prefs.RipScreen = RIPSCREEN_FIT;
+    VtApplyRip();
+    ripQueueReopen = reopen;
+    ripReopenQueued = FALSE;
+    drawsUnlocked = bltUnlocked = 0;
+    VtWrite(buf, (long)n);
+    if (reopen) {
+        assert(vtHeldLen > 0);
+        ripReopenQueued = FALSE;
+        VtHeldResume();
+    }
+    ripQueueReopen = FALSE;
+    assert(vt_rip_commands(vtTerm) > 0 && flushes >= 1);    /* the tail was fed and drawn */
+    assert(drawsUnlocked == 0 && bltUnlocked == 0);
+    assert(layerLocks == 0);
+}
+
+static void test_rip_held_tail_draws_only_under_the_layer_lock(void)
+{
+    held_tail_draws(FALSE);
+    VtClose();
+    held_tail_draws(TRUE);
     VtClose();
 }
 
@@ -2592,6 +3472,7 @@ int main(void)
     test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite();
     test_rip_h2c_c_auto_chunk_rest_is_drawn_per_command_after_the_reopen();
     test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_asked();
+    test_rip_held_tail_draws_only_under_the_layer_lock();
     test_rip_h2c_c_text_before_the_bar_line_and_bytes_behind_the_hold();
     test_ma1_2_line_art_lands_in_the_grid_and_reaches_the_glyph_writer();
     test_ma1_3_blocks_and_shades_map_to_themselves_never_to_the_fallback();
@@ -2629,10 +3510,21 @@ int main(void)
     test_ma4_3_a_scrollback_line_narrower_than_the_grid_is_blank_filled();
     test_ma4_4_the_alt_screen_leaves_the_scrollback_alone();
     test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answered();
+    test_kg32_a_picture_on_a_5_plane_screen_with_12_free_pens_keeps_its_colours();
+    test_kg32_a_many_colour_picture_with_few_colours_on_top_keeps_its_lower_colours();
+    test_sixel_32_a_many_register_picture_with_few_colours_on_top_keeps_its_lower_colours();
     test_kg10_the_screens_pixel_aspect_reaches_the_engine();
     test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque();
     test_rip_index_0_is_the_palette_colour_not_the_background();
+    test_rip_colour_index_is_the_exact_ega_colour_with_a_custom_ansi_palette();
+    test_rip_a_write_of_many_commands_flushes_once();
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
+    test_rip_bull_1_a_small_command_blits_only_its_dirty_rows();
+    test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette();
+    test_rip_bull_5_a_text_window_ends_with_the_rip_screen();
+    test_rip_bull_6_the_screen_after_the_clear_gets_all_rows();
+    test_rip_bull_3_menu_rip_off_leaves_rip_without_a_byte();
+    test_rip_bull_4_auto_clear_screen_without_rip_returns_to_text();
     test_rip_icons_a_1i_icon_is_read_from_the_board_folder();
     test_rip_fonts_preference_reaches_the_engine();
     test_rip_h4_the_screen_switch_is_wired_through_the_data_path();
@@ -2640,6 +3532,11 @@ int main(void)
     test_rip_h5_hotkey_reaches_the_reply_path();
     test_rip_h7_replay_checksum_equals_the_vtcon_golden();
     test_rip_h4_the_screen_switch_never_reaches_the_prefs_file();
+    test_aga_pens_text_and_picture_on_an_8_plane_screen();
+    test_aga_full_colour_map_takes_the_nearest_pen();
+    test_aga_5_to_7_planes_get_pens_of_their_own();
+    test_aga_7_plane_picture_colour_maps_to_a_pen_and_survives_a_switch();
+    test_aga_4_planes_ham_ehb_and_old_graphics_never_ask_for_a_pen();
     printf("term_engine: all assertions passed\n");
     return 0;
 }

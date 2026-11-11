@@ -99,7 +99,7 @@ static void ValidateAndInitPrefs(BOOL *userMustChooseAScreenMode)
     if (prefs.ScrollbackWinLeftEdge < 0              || prefs.ScrollbackWinLeftEdge > DISP_MAX_WIDTH)   prefs.ScrollbackWinLeftEdge = 0;
     if (prefs.ScrollbackWinTopEdge  < 12             || prefs.ScrollbackWinTopEdge  > DISP_MAX_HEIGHT)  prefs.ScrollbackWinTopEdge  = 12;
     if (prefs.ScrollbackWinWidth    < WIN_MIN_WIDTH  || prefs.ScrollbackWinWidth    > DISP_MAX_WIDTH)   prefs.ScrollbackWinWidth    = WIN_DEFAULT_WIDTH;
-    if (prefs.ScrollbackWinHeight   < WIN_MIN_HEIGHT || prefs.ScrollbackWinHeight   > DISP_MAX_HEIGHT)  prefs.ScrollbackWinHeight   = (prefs.DisplayHeight / 2) - 4;
+    if (prefs.ScrollbackWinHeight   < WIN_MIN_HEIGHT || prefs.ScrollbackWinHeight   > DISP_MAX_HEIGHT)  prefs.ScrollbackWinHeight   = Prefs_DefaultScrollbackHeight(prefs.DisplayHeight);
 
     // Scrollback line count
     if (prefs.nScrollbackLines < 10 || prefs.nScrollbackLines > 32000)
@@ -245,6 +245,11 @@ BOOL LoadPrefs(void)
             SimpleReq("No usable screen mode is set.");
             goto clean_and_fail;
         }
+
+        // With no prefs file the scrollback height was validated before the display height
+        // was known; derive it from the screen the user has just chosen.
+        if (userMustChooseAScreenMode)
+            prefs.ScrollbackWinHeight = Prefs_DefaultScrollbackHeight(prefs.DisplayHeight);
     }
 
 
