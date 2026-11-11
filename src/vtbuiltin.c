@@ -408,6 +408,29 @@ static BOOL VtSixNeedsPicker(const vt_image_view *v)
     return (unsigned long)used + vtTcN > vtPicFree;
 }
 
+/* RIP colours on the screen's own pens. While a RIP canvas is up, the screen's pens 0-15 hold the RIP palette
+ * (VtRipShowColours: DCTelnet.c) and RIP colour i is drawn with pen i, so the user's ANSI palette cannot turn
+ * an EGA colour into another one. vtRipPens: they are loaded; the user's palette comes back when the canvas goes
+ * or any other picture is drawn (VtRipRestoreColours), and DCTelnet.c's LoadAnsiPalette tells when it
+ * overwrote them (VtRipColoursLost). */
+static BOOL vtRipPens;
+static unsigned long vtRipPensLoads;    /* sentinel: the RIP palette went onto the pens */
+
+static void VtRipColoursLost(void)
+{
+    vtRipPens = FALSE;
+    vtImgSerial = -1;
+}
+
+static void VtRipPensRestore(void)
+{
+    if (!vtRipPens)
+        return;
+    vtRipPens = FALSE;
+    vtImgSerial = -1;
+    VtRipRestoreColours();
+}
+
 static void VtImgColours(const vt_image_view *v)
 {
     int i;
@@ -415,7 +438,23 @@ static void VtImgColours(const vt_image_view *v)
 
     if (vtImgSerial == key)
         return;
+    if (!VtIsRipCanvas(v))
+        VtRipPensRestore();
     vtImgSerial = key;
+    if (VtIsRipCanvas(v)) {
+        ULONG rgb[VT_RIP_NPAL];
+
+        for (i = 0; i < VT_RIP_NPAL; i++)
+            rgb[i] = v->pal[i] & 0xFFFFFFUL;
+        if (VtRipShowColours(rgb)) {
+            vtRipPens = TRUE;
+            vtRipPensLoads++;
+            vtPicCur = NULL;
+            for (i = 0; i < VT_RIP_NPAL; i++)
+                vtImgMap[i] = term_pen_map[i];
+            return;
+        }
+    }
     /* A sixel's index 0 is its unset pixels (the default background); a RIP
      * canvas or a kitty picture reads it as a palette colour. */
     vtImgMap[0] = (!v->kitty && !v->bg0) ? term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v->pal[0] & 0xFFFFFFUL)))]
@@ -1126,6 +1165,7 @@ static void VtRipWatch(void)
     before = prefs;
     if (vtRipSeen)                      /* RIP ended: the previous screen and renderer */
     {
+        VtRipPensRestore();
         prefs.State = (prefs.State & ~APP_RENDERER_ALL) | (vtRipSaved.State & APP_RENDERER_ALL);
         prefs.DisplayID = vtRipSaved.DisplayID;
         prefs.DisplayWidth = vtRipSaved.DisplayWidth;
@@ -1656,10 +1696,38 @@ static void VtRipAutoLeave(void)
     VtApplyRipMode();                   /* Auto again: text until the BBS speaks RIP */
 }
 
+/* RIP drawing is flushed once per write, not per command: the engine keeps the union of the changed area
+ * (vt_rip_take_dirty), so one blit covers a whole buffer of commands. A long buffer still draws as it goes:
+ * VtRipFlushDue says when VT_RIP_FLUSH_MS have passed since the last flush (E-clock, TimerBase). */
+#define VT_RIP_FLUSH_MS 100
+static ULONG vtRipFlushLo;
+static unsigned long vtRipFlushes;      /* sentinel: flushes made by VtFeedRip */
+
+static BOOL VtRipFlushDue(void)
+{
+    struct EClockVal e;
+    ULONG freq, d;
+
+    if (!TimerBase)
+        return FALSE;
+    freq = ReadEClock(&e);
+    d = e.ev_lo - vtRipFlushLo;
+    if (freq == 0 || d / (freq / 1000UL + 1) < VT_RIP_FLUSH_MS)
+        return FALSE;
+    vtRipFlushLo = e.ev_lo;
+    return TRUE;
+}
+
 static void VtFeedRip(const UBYTE *data, long len)
 {
     long done = vt_rip_commands(vtTerm);
 
+    if (TimerBase) {
+        struct EClockVal e;
+
+        ReadEClock(&e);
+        vtRipFlushLo = e.ev_lo;
+    }
     while (len > 0) {
         const UBYTE *bar = memchr(data, '|', (size_t)len);
         const UBYTE *lf = memchr(data, '\n', (size_t)len);
@@ -1676,10 +1744,14 @@ static void VtFeedRip(const UBYTE *data, long len)
         len -= n;
         if (vt_rip_commands(vtTerm) != done) {
             done = vt_rip_commands(vtTerm);
-            VtRipFlush();
-            VtDrawPause();
+            if (len > 0 && VtRipFlushDue()) {
+                vtRipFlushes++;
+                VtRipFlush();
+                VtDrawPause();
+            }
         }
     }
+    vtRipFlushes++;
     VtRipFlush();
 }
 

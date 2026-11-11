@@ -432,6 +432,10 @@ BYTE dontUseSig31 = -1; // don't use it, ibmcon.device will destroy it.
 static BOOL  selDragging;
 static BOOL VtRipDefaultScreen(ULONG *id, UWORD *w, UWORD *h);     // below RequestDisplayReopen
 static void VtRipScreenChanged(const struct PrefsStruct *before);
+static BOOL VtRipShowColours(const ULONG rgb[16]);   // below LoadAnsiPalette
+static void VtRipRestoreColours(void);
+static void VtRipColoursLost(void);
+static BOOL TerminalIsTrueColour(void);
 static BOOL VtReopenPending(void);         // below RequestDisplayReopen
 #include "vtbuiltin.c"
 
@@ -1888,25 +1892,32 @@ static void ReadWorkbenchUiColours(void)
     if (wb) UnlockPubScreen(NULL, wb);
 }
 
-// Load target's palette onto screen s's ANSI pens (Palette_ScreenColours):
-// 8 bits a gun from V39, 4 before.
+// pens[i] of screen s shown as 0xRRGGBB rgb[i]: 8 bits a gun from V39, 4 before.
+static void SetPensRgb(struct Screen *s, const UBYTE pens[16], const ULONG rgb[16])
+{
+    UWORD i;
+
+    for (i = 0; i < 16; i++)
+    {
+        ULONG c = rgb[i];
+
+        if (GfxBase->LibNode.lib_Version >= 39)
+            SetRGB32(&s->ViewPort, pens[i], ((c >> 16) & 0xFF) * 0x01010101UL,
+                     ((c >> 8) & 0xFF) * 0x01010101UL, (c & 0xFF) * 0x01010101UL);
+        else
+            SetRGB4(&s->ViewPort, pens[i], (c >> 20) & 0xF, (c >> 12) & 0xF, (c >> 4) & 0xF);
+    }
+}
+
+// Load target's palette onto screen s's ANSI pens (Palette_ScreenColours).
 static void ShowAnsiColours(struct Screen *s, struct PrefsStruct *target)
 {
-    UWORD i, colours[16];
+    UWORD colours[16];
     ULONG shown[16];
 
     Palette_Get(target, colours);               // the renderer's palette, ANSI order
     Palette_ScreenColours(colours, ansiColourPens, wbUiKnown ? wbUiColours : NULL, shown);
-    for (i = 0; i < 16; i++)
-    {
-        ULONG c = shown[i];
-
-        if (GfxBase->LibNode.lib_Version >= 39)
-            SetRGB32(&s->ViewPort, ansiColourPens[i], ((c >> 16) & 0xFF) * 0x01010101UL,
-                     ((c >> 8) & 0xFF) * 0x01010101UL, (c & 0xFF) * 0x01010101UL);
-        else
-            SetRGB4(&s->ViewPort, ansiColourPens[i], (c >> 20) & 0xF, (c >> 12) & 0xF, (c >> 4) & 0xF);
-    }
+    SetPensRgb(s, ansiColourPens, shown);
 }
 
 // Load target's palette onto the screen: the ANSI pens (in ANSI order) on 32+
@@ -1919,6 +1930,30 @@ static void LoadAnsiPalette(struct PrefsStruct *target)
         ShowAnsiColours(scr, target);
     else
         LoadRGB4(&scr->ViewPort, Prefs_Palette(target), 16);
+    VtRipColoursLost();         // the RIP colours on these pens are gone
+}
+
+// A RIP canvas shows colour i on the terminal's pen i exactly (SyncTERM does the same): the screen's
+// ANSI pens take the RIP palette, rgb[i] as 0xRRGGBB, whatever the user's ANSI palette is. FALSE where the
+// pens are not ours to set (a Workbench window) or hold colours, not pen numbers (an RTG screen over 8
+// bits): the caller keeps the nearest pen.
+static BOOL VtRipShowColours(const ULONG rgb[16])
+{
+    UBYTE plain[16];
+    UWORD i;
+
+    if (STATE_IS_NOT(APP_FULLSCREEN) || TerminalIsTrueColour())
+        return FALSE;
+    for (i = 0; i < 16; i++)
+        plain[i] = (UBYTE)i;
+    SetPensRgb(scr, ansiOwnPens ? ansiColourPens : plain, rgb);
+    return TRUE;
+}
+
+// RIP is done with the pens: the user's ANSI palette back.
+static void VtRipRestoreColours(void)
+{
+    LoadAnsiPalette(&prefs);
 }
 
 /*

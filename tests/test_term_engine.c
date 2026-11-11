@@ -200,10 +200,10 @@ static void FreeBitMap(struct BitMap *b) { (void)b; }
 struct Device { int unused; };
 struct EClockVal { ULONG ev_hi, ev_lo; };
 struct Device *TimerBase;
-static ULONG eclockNow;
+static ULONG eclockNow, eclockStep = 7;
 static ULONG ReadEClock(struct EClockVal *e)
 {
-    eclockNow += 7;
+    eclockNow += eclockStep;
     e->ev_hi = 0;
     e->ev_lo = eclockNow;
     return 709379;
@@ -404,6 +404,22 @@ static void *AllocVec(unsigned long n, unsigned long f)
     return (f & MEMF_CLEAR) ? calloc(1, n) : malloc(n);
 }
 static void FreeVec(void *p) { vecLive--; free(p); }
+/* RIP-COLOUR: DCTelnet.c's pen loading, as a recording stub: fakePen[n] is the colour the screen's pen n holds. */
+static ULONG fakePen[256];
+static int ripShowCalls, ripRestoreCalls;
+static BOOL VtRipShowColours(const ULONG rgb[16])
+{
+    int i;
+
+    ripShowCalls++;
+    for (i = 0; i < 16; i++)
+        fakePen[term_pen_map[i]] = rgb[i];      /* the real one writes pen i (ansiColourPens[i] on own pens) */
+    return TRUE;
+}
+static void VtRipRestoreColours(void)
+{
+    ripRestoreCalls++;
+}
 #include "../src/vtbuiltin.c"
 #undef vt_write
 #undef vt_flush
@@ -2338,7 +2354,8 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
     assert(v.kitty == 0 && v.z < 0 && v.w == 640 && v.h == 350);
     assert(v.pal[9] != 0 && v.pix[50 * 640 + 50] == 9 && v.pix[200 * 640 + 150] == 0);
-    barpen = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[9] & 0xFFFFFFUL)))];
+    barpen = term_pen_map[9];                       /* RIP-COLOUR: index i is pen i, holding the RIP colour */
+    assert(fakePen[barpen] == (v.pal[9] & 0xFFFFFFUL));
     bgpen = term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
     assert(chunkyFb[(TERM_PY(0) + 50) * FB_W + TERM_PX(0) + 50] == barpen);     /* inside the bar */
     assert(chunkyFb[(TERM_PY(0) + 200) * FB_W + TERM_PX(0) + 150] == bgpen);    /* index 0: painted, not skipped */
@@ -2364,13 +2381,82 @@ static void test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaqu
     assert(VtEClockUs(5, 0, 709379UL) == 0 && VtEClockUs(5, 1, 0) == 0);
 }
 
+/* RIP-COLOUR: RIP colour i is exactly the EGA colour whatever the user's ANSI palette is. The screen's pens
+ * take the RIP palette and index i draws with pen i (SyncTERM does the same). With a reversed ANSI palette the
+ * nearest-pen match put 0x0D on a pen that is not 0xFF55FF. vtRipPensLoads is the sentinel that the load ran. */
+static void test_rip_colour_index_is_the_exact_ega_colour_with_a_custom_ansi_palette(void)
+{
+    UWORD saved[16];
+    int i, pen13, pen1;
+    unsigned long loads;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    memcpy(saved, prefs.AnsiColors, sizeof saved);
+    for (i = 0; i < 16; i++)
+        prefs.AnsiColors[i] = saved[15 - i];    /* a user palette: nothing where the default has it */
+    memset(fakePen, 0, sizeof fakePen);
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    loads = vtRipPensLoads;
+    vtImgSerial = -1;
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[2!\r\n");
+    vt_put("!|S010D|B0A0A2S2S|S0101|B5K0A8C2S\r\n");   /* colour 0D: (10,10)-(100,100); colour 01: (200,10)-(300,100) */
+    assert(vtRipPensLoads > loads);
+    pen13 = chunkyFb[(TERM_PY(0) + 50) * FB_W + TERM_PX(0) + 50];
+    pen1 = chunkyFb[(TERM_PY(0) + 50) * FB_W + TERM_PX(0) + 250];
+    assert(pen13 == term_pen_map[13] && pen1 == term_pen_map[1]);
+    assert(fakePen[pen13] == 0xFF55FFUL);
+    assert(fakePen[pen1] == 0x0000AAUL);
+    memcpy(prefs.AnsiColors, saved, sizeof saved);
+}
+
+/* RIP-SLOW: one write of many commands is one flush, not one per command (vtRipFlushes is the sentinel); a
+ * buffer that takes longer than the cap still flushes on the way. */
+static void test_rip_a_write_of_many_commands_flushes_once(void)
+{
+    static char buf[2048];
+    int i, n = 0, before;
+    unsigned long f0;
+
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[2!\r\n");
+    n += sprintf(buf + n, "!|S0109");
+    for (i = 0; i < 40; i++)
+        n += sprintf(buf + n, "|B%02d%02d%02d%02d", i % 30, i % 30, i % 30 + 5, i % 30 + 5);
+    n += sprintf(buf + n, "\r\n");
+    f0 = vtRipFlushes;
+    before = flushes;
+    VtWrite((const UBYTE *)buf, n);
+    assert(vt_rip_commands(vtTerm) >= 40);
+    assert(vtRipFlushes - f0 == 1);                 /* was 41: one per command */
+    assert(flushes - before <= 2);
+    /* the time cap: a clock that jumps 150 ms per command flushes more than once, but not per command */
+    {
+        static struct Device timer;
+        extern struct Device *TimerBase;
+
+        TimerBase = &timer;
+        f0 = vtRipFlushes;
+        eclockStep = 709379UL * 150 / 1000;
+        VtWrite((const UBYTE *)buf, n);
+        eclockStep = 7;
+        TimerBase = NULL;
+        assert(vtRipFlushes - f0 > 2);
+    }
+}
+
 /* RIP palette entry 0 is a real colour: set non-black, the canvas pixels of
  * index 0 draw with that colour's pen, not the default background pen (only a
  * sixel's index 0 means unset). */
 static void test_rip_index_0_is_the_palette_colour_not_the_background(void)
 {
     vt_image_view v;
-    UBYTE pen0, bgpen;
+    UBYTE pen0;
 
     xterm_begin();
     vt_put("\033c\033[2J");
@@ -2382,9 +2468,8 @@ static void test_rip_index_0_is_the_palette_colour_not_the_background(void)
     assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
     assert(v.kitty == 0 && v.bg0 == 0 && v.pix[200 * 640 + 150] == 0);
     assert((v.pal[0] & 0xFFFFFFUL) != 0);
-    pen0 = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[0] & 0xFFFFFFUL)))];
-    bgpen = term_pen_map[VtPenFor(VT_COLOR_DEFAULT_BG)];
-    assert(pen0 != bgpen);
+    pen0 = term_pen_map[0];                         /* RIP-COLOUR: pen 0 holds the RIP colour 0 (0xAA0000) */
+    assert(fakePen[pen0] == 0xAA0000UL);
     assert(chunkyFb[(TERM_PY(0) + 200) * FB_W + TERM_PX(0) + 150] == pen0);
 }
 
@@ -2540,7 +2625,7 @@ static void test_rip_bull_1_a_small_command_blits_only_its_dirty_rows(void)
     small = vtImgRuns;
     assert(small > 0 && small * 3 < full);                      /* the sentinel: blitted, and not all of it */
     assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
-    barpen = term_pen_map[VtPenFor((vt_color)(VT_COLOR_RGB | (v.pal[1] & 0xFFFFFFUL)))];
+    barpen = term_pen_map[1];                       /* RIP-COLOUR: index i is pen i */
     assert(chunkyFb[(TERM_PY(0) + 20) * FB_W + TERM_PX(0) + 20] == barpen);     /* the new bar is on screen */
     VtClose();
 }
@@ -2558,6 +2643,7 @@ static void rip_bull_bar(int colour, int x0)
     vt_put(cmd);
 }
 
+/* RIP-COLOUR: the RIP palette is loaded onto the screen's pens once per palette, not once per command. */
 static void test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette(void)
 {
     unsigned long picks;
@@ -2572,17 +2658,17 @@ static void test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette(void)
     VtApplyRip();
     calls[0] = 0;
     vt_put("\033[2!\r\n");
-    vtPicPicks = 0;
-    for (i = 1; i <= 15; i++)                                   /* 15 colours: more than the 12 free pens */
+    vtRipPensLoads = 0;
+    for (i = 1; i <= 15; i++)                                   /* 15 colours */
         rip_bull_bar(i, 10 + 30 * (i - 1));
-    picks = vtPicPicks;
-    assert(picks >= 1);                                         /* the sentinel: the picker ran for the canvas */
+    picks = vtRipPensLoads;
+    assert(picks >= 1);                                         /* the sentinel: the RIP palette went onto the pens */
     for (i = 0; i < 3; i++)
         rip_bull_bar(15, 10 + 30 * 14);                         /* more commands, the same palette */
-    assert(vtPicPicks == picks);                                /* not picked again */
+    assert(vtRipPensLoads == picks);                                /* not loaded again */
     calls[0] = 0;
     vt_put("!|a0904\r\n");                                      /* palette entry 9 changes */
-    assert(vtPicPicks == picks + 1);                            /* a new palette: picked again */
+    assert(vtRipPensLoads == picks + 1);                            /* a new palette: loaded again */
     VtClose();
 }
 
@@ -3010,8 +3096,8 @@ static void test_rip_h2c_spans_new_path_equals_the_old_algorithm(void)
         }
 }
 
-/* Plan H2c part B: with RIP active a write of several commands draws after each
- * finished command, not once at the end; with RIP off one write is one draw. */
+/* Plan H2c part B (RIP-SLOW: now one flush per write, the time cap aside): with RIP active a write of
+ * several commands is drawn through the sliced path; with RIP off one write is one draw. */
 static void test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite(void)
 {
     static const char pic[] = "!|S0109|B0A0A2S2S\r\n!|S0102|B323264642S\r\n!|c0A\r\n";
@@ -3029,7 +3115,7 @@ static void test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite(void
     onFlushes = flushes;
     assert(parses == 0);                            /* the sliced path, not vt_write */
     assert(vt_rip_commands(vtTerm) - cmds >= 3);
-    assert(onFlushes >= 4);                         /* a flush per finished command, plus the last */
+    assert(onFlushes == 1);                         /* RIP-SLOW: one flush for the write, not one per command */
     assert(layerLocks == 0);                        /* every flush gave the layers back */
     VtClose();
 
@@ -3120,7 +3206,7 @@ static void test_rip_h2c_c_auto_chunk_rest_is_drawn_per_command_after_the_reopen
     rip_auto_chunk(TRUE, &fl, &held);
     assert(held > 0);
     assert(parses == 0);                                /* sliced path throughout, never vt_write */
-    assert(fl >= 4);                                    /* a flush per finished command after activation */
+    assert(fl >= 1);                                    /* the held rest is drawn (RIP-SLOW: one flush) */
     VtClose();
 }
 
@@ -3131,7 +3217,7 @@ static void test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_as
     rip_auto_chunk(FALSE, &fl, &held);
     assert(held == 0);                                  /* fed inside the same VtWrite */
     assert(parses == 0);
-    assert(fl >= 4);
+    assert(fl >= 1);
     VtClose();
 }
 
@@ -3165,7 +3251,7 @@ static void held_tail_draws(BOOL reopen)
         VtHeldResume();
     }
     ripQueueReopen = FALSE;
-    assert(vt_rip_commands(vtTerm) > 0 && flushes >= 4);    /* the tail was fed and drawn */
+    assert(vt_rip_commands(vtTerm) > 0 && flushes >= 1);    /* the tail was fed and drawn */
     assert(drawsUnlocked == 0 && bltUnlocked == 0);
     assert(layerLocks == 0);
 }
@@ -3318,6 +3404,8 @@ int main(void)
     test_kg10_the_screens_pixel_aspect_reaches_the_engine();
     test_rip_h2_a_rip_canvas_through_vtwrite_is_drawn_with_index_0_opaque();
     test_rip_index_0_is_the_palette_colour_not_the_background();
+    test_rip_colour_index_is_the_exact_ega_colour_with_a_custom_ansi_palette();
+    test_rip_a_write_of_many_commands_flushes_once();
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
     test_rip_bull_1_a_small_command_blits_only_its_dirty_rows();
     test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette();
