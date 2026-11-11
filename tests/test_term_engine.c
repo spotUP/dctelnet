@@ -2704,7 +2704,7 @@ static void test_rip_bull_5_a_text_window_ends_with_the_rip_screen(void)
 {
     int pass, cx, cy;
 
-    for (pass = 0; pass < 2; pass++) {
+    for (pass = 0; pass < 3; pass++) {
         xterm_begin();
         calls[0] = 0;
         vt_put("\033c\033[2J");
@@ -2719,7 +2719,12 @@ static void test_rip_bull_5_a_text_window_ends_with_the_rip_screen(void)
             vt_put("\033[2J");                                  /* a clear before the reset */
         }
         calls[0] = 0;
-        vt_put("\r\n!|*\r\n");
+        if (pass == 2)
+            vt_put("\033[2J\033[HWhich Bulletin? \r\n");    /* auto leaves RIP: no RIP command follows */
+        else
+            vt_put("\r\n!|*\r\n");
+        if (pass == 2)
+            assert(vt_rip_active(vtTerm) == 0);                 /* the sentinel: the auto exit ran */
         calls[0] = 0;
         vt_put("\033[H");
         vt_cursor(vtTerm, &cx, &cy);
