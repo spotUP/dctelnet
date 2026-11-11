@@ -574,8 +574,9 @@ static int VtImgSpans(const VtImgFlat *fl, int n, int k, LONG w, WORD *sp)
     return ns;
 }
 
-/* w x h pixels of v from (sx, sy) to RastPort pixel (dx, dy). */
-static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h, WORD dx, WORD dy)
+/* w x h pixels of v to RastPort pixel (dx, dy): output row k shows picture row rows[k] (a RIP canvas fitted to the
+ * screen's pixel aspect skips or repeats rows); rows NULL: picture rows sy to sy + h - 1. Columns from sx. */
+static void VtImgWriteRows(const vt_image_view *v, LONG sx, LONG sy, const LONG *rows, LONG w, LONG h, WORD dx, WORD dy)
 {
     LONG stride = (w + 15) & ~15L;      /* WritePixelArray8 wants rows of 16 */
     LONG k, j;
@@ -592,21 +593,27 @@ static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h,
         return;
     VtImgColours(v);
     {   /* row pointers advance by addition: no per-row multiply (about 200 cycles each) */
-        const vt_u8 *src = v->pix + sy * v->w + sx;
+        const vt_u8 *src = v->pix + (rows ? rows[0] : sy) * v->w + sx;
         UBYTE *d = vtImgBuf;
         for (k = 0; k < h; k++) {
+            LONG yy = sy + k;           /* the picture row of output row k (dither phase and RGB follow it) */
+
+            if (rows) {
+                yy = rows[k];
+                src = v->pix + yy * v->w + sx;
+            }
             if (vtPicCur && vtPicCur->indexed) {
                 const pp_plan *pl = (const pp_plan *)(vtPicCur->mem + sizeof(pm_palette));
 
                 for (j = 0; j < w; j++)
-                    d[j] = src[j] ? (UBYTE)pp_pen_at(pl, src[j], (int)(sx + j), (int)(sy + k)) : vtImgMap[0];
+                    d[j] = src[j] ? (UBYTE)pp_pen_at(pl, src[j], (int)(sx + j), (int)yy) : vtImgMap[0];
             } else if (vtPicCur) {
                 UBYTE *plan3 = vtPicCur->mem + sizeof(pm_palette), *bc = plan3 + PP_BINS * 3;
-                const UBYTE *px = v->rgb + ((sy + k) * v->w + sx) * 3;
+                const UBYTE *px = v->rgb + (yy * v->w + sx) * 3;
 
                 for (j = 0; j < w; j++)
                     d[j] = src[j] ? vtPicCur->cpen[pp_pen_bin(plan3, bc, (pm_palette *)vtPicCur->mem, vtPicCur->usable,
-                                                              px + j * 3, (int)(sx + j), (int)(sy + k))]
+                                                              px + j * 3, (int)(sx + j), (int)yy)]
                                   : vtImgMap[0];
             } else {
                 VtImgMapRow(vtImgMap, src, d, (UWORD)w);
@@ -666,6 +673,12 @@ static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, con
     }
 }
 
+/* w x h pixels of v from (sx, sy) to RastPort pixel (dx, dy). */
+static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h, WORD dx, WORD dy)
+{
+    VtImgWriteRows(v, sx, sy, NULL, w, h, dx, dy);
+}
+
 /* Cells [a, b) of screen row y show picture v. A kitty picture's index 0
  * is transparent: only the runs of the pixels that paint go out. */
 static void VtImgRun(const vt_image_view *v, int a, int b, int y)
@@ -692,14 +705,22 @@ static void VtImgRun(const vt_image_view *v, int a, int b, int y)
             return;
         if (w > v->w - sx)
             w = v->w - sx;
-        for (k = 0; k < 8 && w > 0; k++) {
-            LONG oy = v->py + k;
+        {   /* the cell row's output rows in one write: rows[] maps each to its picture row */
+            LONG rows[8], n = 0, first = -1;
 
-            if (oy < 0)
-                continue;
-            if (oy >= v->dh)
-                break;
-            VtImgWrite(v, sx, vt_scale_row((int)oy, v->h, v->dh), w, 1, dx, (WORD)(dy0 + k));
+            for (k = 0; k < 8 && w > 0; k++) {
+                LONG oy = v->py + k;
+
+                if (oy < 0)
+                    continue;
+                if (oy >= v->dh)
+                    break;
+                if (first < 0)
+                    first = k;
+                rows[n++] = vt_scale_row((int)oy, v->h, v->dh);
+            }
+            if (n > 0)
+                VtImgWriteRows(v, sx, 0, rows, w, n, dx, (WORD)(dy0 + first));
         }
         return;
     }

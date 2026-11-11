@@ -2450,6 +2450,56 @@ static void test_rip_a_write_of_many_commands_flushes_once(void)
     }
 }
 
+/* RIP-SLOW-2: a RIP canvas fitted to a 1:2 pixel-aspect screen (the scaled path of VtImgRun) is blitted in few
+ * VtImgWrite runs, one per cell row, not one per output pixel row. The frame hash pins the output pixels. */
+static unsigned long fbHash(void)
+{
+    unsigned long h = 2166136261UL;
+    int i;
+
+    for (i = 0; i < FB_W * FB_H; i++)
+        h = (h ^ chunkyFb[i]) * 16777619UL;
+    return h;
+}
+
+#define RIPSLOW2_HASH 12495468438034373417UL
+#define RIPSLOW2_MAXRUNS 40
+static void test_rip_slow_2_a_scaled_canvas_is_blitted_in_batches(void)
+{
+    static char buf[40000];
+    int i, n = 0;
+    unsigned long runs0;
+    int calls0;
+
+    modeRx = 22; modeRy = 44;
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[2!\r\n");
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    n += sprintf(buf + n, "!|S0109|B00000S2S");        /* the whole canvas: every row dirty */
+    for (i = 0; i < 1500; i++)
+        n += sprintf(buf + n, "|S01%c%c|B%02d%02d%02d%02d", "0123456789ABCDEF"[i % 16] == '0' ? '1' : "0123456789ABCDEF"[i % 16],
+                     '0', (i * 7) % 60, (i * 3) % 30, (i * 7) % 60 + 9, (i * 3) % 30 + 9);
+    n += sprintf(buf + n, "\r\n");
+    chunkyCalls = 0;
+    runs0 = vtImgRuns;
+    calls0 = chunkyCalls;
+    VtWrite((const UBYTE *)buf, n);
+    {
+        vt_image_view v;
+        assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+        assert(v.dh > 0 && v.dh != v.h);               /* the scaled path is the one under test */
+        if (getenv("RIPSLOW_PRINT"))
+            fprintf(stderr, "dh=%d runs=%lu chunky=%d hash=%lu\n", (int)v.dh, vtImgRuns - runs0, chunkyCalls - calls0, fbHash());
+    }
+    assert(fbHash() == RIPSLOW2_HASH);
+    assert(vtImgRuns - runs0 <= RIPSLOW2_MAXRUNS);      /* was 248: one run per output pixel row */
+    modeRx = 0; modeRy = 0;
+    xterm_begin();
+}
+
 /* RIP palette entry 0 is a real colour: set non-black, the canvas pixels of
  * index 0 draw with that colour's pen, not the default background pen (only a
  * sixel's index 0 means unset). */
@@ -3518,6 +3568,7 @@ int main(void)
     test_rip_index_0_is_the_palette_colour_not_the_background();
     test_rip_colour_index_is_the_exact_ega_colour_with_a_custom_ansi_palette();
     test_rip_a_write_of_many_commands_flushes_once();
+    test_rip_slow_2_a_scaled_canvas_is_blitted_in_batches();
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
     test_rip_bull_1_a_small_command_blits_only_its_dirty_rows();
     test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette();
