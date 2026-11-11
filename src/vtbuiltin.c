@@ -1751,7 +1751,9 @@ static void VtWriteIn(const UBYTE *data, long len, BOOL sniff)
         VtFeed(data, ndata);
     } else
         VtFeed(data, len);
-    vtInWrite = FALSE;
+    /* vtInWrite stays set through the held tail below: its draws go into the screen
+     * bitmap and must open the drawing (LayerInfo held, cover refreshed) like the
+     * parse's; VtParseEnd clears it. */
     VtRipAutoLeave();
     VtRipWatch();                   /* the one place RIP going active/inactive is noticed */
     /* RIP Auto went active halfway through the chunk: when no screen reopen was asked

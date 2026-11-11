@@ -56,7 +56,7 @@ static void call(const char *fmt, long a, long b, long c, long d, long e)
 
 /* The screen's LayerInfo, as Intuition sees it: the drawing that went into
  * the planes while it was not held, and the planes as they were given back. */
-static int layerLocks, bltUnlocked, blitBusy, unlockedBusy;
+static int layerLocks, bltUnlocked, blitBusy, unlockedBusy, drawsUnlocked;
 static UBYTE atUnlock[4][BPR * H];
 static void WaitBlit(void) { blitBusy = 0; }
 static void LockLayerInfo(struct Layer_Info *li) { (void)li; layerLocks++; }
@@ -153,6 +153,8 @@ static void Text(struct RastPort *rp, STRPTR s, ULONG n)
 static UBYTE chunkyFb[FB_W * FB_H];     /* the last pen written at each pixel, 0xFF where none */
 static void RectFill(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
 {
+    if (!layerLocks)
+        drawsUnlocked++;
     if (rp->DrawMode == COMPLEMENT)
         call("Complement(%ld,%ld,%ld,%ld mask%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)rp->Mask);
     else
@@ -172,6 +174,8 @@ static void WriteChunkyPixels(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LO
 {
     LONG x, y, stride = mod ? mod : x1 - x0 + 1;
     (void)rp;
+    if (!layerLocks)
+        drawsUnlocked++;
     chunkyCalls++;
     for (y = y0; y <= y1; y++)
         for (x = x0; x <= x1; x++)
@@ -221,8 +225,10 @@ static LONG BltBitMap(struct BitMap *s, WORD sx, WORD sy, struct BitMap *d, WORD
 
     (void)tmp;
     blitBusy = 1;
-    if (!layerLocks)
+    if (!layerLocks) {
         bltUnlocked++;
+        drawsUnlocked++;
+    }
     for (p = 0; p < 4; p++) {
         if (!(mask & (1 << p)))
             continue;
@@ -491,7 +497,7 @@ static void setup(void)
     menuLayer.back = &winLayer;
     menuLayer.bounds.MinX = 0; menuLayer.bounds.MinY = 0;
     menuLayer.bounds.MaxX = 199; menuLayer.bounds.MaxY = 40;
-    layerLocks = bltUnlocked = blitBusy = unlockedBusy = sentLocked = menuOnSend = menuOnParse = 0;
+    layerLocks = bltUnlocked = drawsUnlocked = blitBusy = unlockedBusy = sentLocked = menuOnSend = menuOnParse = 0;
     assert(term_init_area(&screen, &winRp, 0, TOP, 0, TOP, W, H - TOP, &font) == 0);
     calls[0] = 0;
 }
@@ -3129,6 +3135,49 @@ static void test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_as
     VtClose();
 }
 
+/* RIP held tail draws only under the layer lock: the rest of an Auto chunk, fed
+ * command by command after RIP turned on mid-chunk, goes into the screen bitmap
+ * like any other draw, so the LayerInfo is held for it (an Intuition menu opened
+ * meanwhile cannot be written over). Both paths: the tail fed inside the same
+ * VtWrite, and the one VtHeldResume feeds after the screen reopen. The draw count
+ * is the sentinel that the tail drew at all. */
+static void held_tail_draws(BOOL reopen)
+{
+    static UBYTE buf[512];
+    FILE *f = fopen("../src/third_party/vtcon/tests/rip/07-buttons.rip", "rb");
+    size_t n;
+
+    assert(f);
+    n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_AUTO;
+    prefs.RipScreen = RIPSCREEN_FIT;
+    VtApplyRip();
+    ripQueueReopen = reopen;
+    ripReopenQueued = FALSE;
+    drawsUnlocked = bltUnlocked = 0;
+    VtWrite(buf, (long)n);
+    if (reopen) {
+        assert(vtHeldLen > 0);
+        ripReopenQueued = FALSE;
+        VtHeldResume();
+    }
+    ripQueueReopen = FALSE;
+    assert(vt_rip_commands(vtTerm) > 0 && flushes >= 4);    /* the tail was fed and drawn */
+    assert(drawsUnlocked == 0 && bltUnlocked == 0);
+    assert(layerLocks == 0);
+}
+
+static void test_rip_held_tail_draws_only_under_the_layer_lock(void)
+{
+    held_tail_draws(FALSE);
+    VtClose();
+    held_tail_draws(TRUE);
+    VtClose();
+}
+
 /* Bytes that arrive while the rest is held go behind it; text before the `!|` line
  * is drawn as it always was. */
 static void test_rip_h2c_c_text_before_the_bar_line_and_bytes_behind_the_hold(void)
@@ -3225,6 +3274,7 @@ int main(void)
     test_rip_h2c_b_each_finished_command_is_flushed_through_vtwrite();
     test_rip_h2c_c_auto_chunk_rest_is_drawn_per_command_after_the_reopen();
     test_rip_h2c_c_auto_chunk_rest_is_drawn_at_once_when_no_reopen_is_asked();
+    test_rip_held_tail_draws_only_under_the_layer_lock();
     test_rip_h2c_c_text_before_the_bar_line_and_bytes_behind_the_hold();
     test_ma1_2_line_art_lands_in_the_grid_and_reaches_the_glyph_writer();
     test_ma1_3_blocks_and_shades_map_to_themselves_never_to_the_fallback();
