@@ -2674,6 +2674,60 @@ static void test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette(void)
     VtClose();
 }
 
+/* 5. B90-HALF: bull90 sets a RIP text window on rows 13-24; the board's RIP_RESET_WINDOWS
+ *    after the pause (auto mode) gives the whole screen back, also when a clear comes first. */
+static void rip_bull_5_feed_bull90(void)
+{
+    static const char *const lines[] = {
+        "\033[2J\033[HGraphics test: RIPscrip\r\n",
+        "!|*|E|Q0001020304050K071K1L1M1N1O1P1Q1R\r\n",
+        "!|S0101|B000K0Z2S\r\n",
+        "!|w000D270O10\r\n",
+        "!|a0104\r\n",
+        "!|#\r\n",
+        "End of RIPscrip test.\r\n",
+        NULL
+    };
+    int i, cx, cy;
+
+    for (i = 0; lines[i]; i++) {
+        calls[0] = 0;
+        vt_put(lines[i]);
+    }
+    calls[0] = 0;
+    vt_put("\033[H");
+    vt_cursor(vtTerm, &cx, &cy);
+    assert(cy == 13);                                           /* the bulletin's text window holds */
+}
+
+static void test_rip_bull_5_a_text_window_ends_with_the_rip_screen(void)
+{
+    int pass, cx, cy;
+
+    for (pass = 0; pass < 2; pass++) {
+        xterm_begin();
+        calls[0] = 0;
+        vt_put("\033c\033[2J");
+        prefs.RipMode = RIPMODE_AUTO;
+        calls[0] = 0;
+        VtApplyRip();
+        rip_bull_5_feed_bull90();
+        calls[0] = 0;
+        vt_put("(Pause)...Space To Resume: \r\033[K");
+        if (pass == 1) {
+            calls[0] = 0;
+            vt_put("\033[2J");                                  /* a clear before the reset */
+        }
+        calls[0] = 0;
+        vt_put("\r\n!|*\r\n");
+        calls[0] = 0;
+        vt_put("\033[H");
+        vt_cursor(vtTerm, &cx, &cy);
+        assert(cy == 0);                                        /* the whole screen is back */
+        VtClose();
+    }
+}
+
 /* 3. Menu RIPscrip Off puts the text screen back at once, not with the next byte from the BBS. */
 static void test_rip_bull_3_menu_rip_off_leaves_rip_without_a_byte(void)
 {
@@ -3411,6 +3465,7 @@ int main(void)
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
     test_rip_bull_1_a_small_command_blits_only_its_dirty_rows();
     test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette();
+    test_rip_bull_5_a_text_window_ends_with_the_rip_screen();
     test_rip_bull_3_menu_rip_off_leaves_rip_without_a_byte();
     test_rip_bull_4_auto_clear_screen_without_rip_returns_to_text();
     test_rip_icons_a_1i_icon_is_read_from_the_board_folder();
