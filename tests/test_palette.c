@@ -202,6 +202,26 @@ static void test_the_dialogs_take_the_workbench_colours_on_16_colours(void) {
     for (i = 0; i < 16; i++) assert(out[i] == Palette_RGB32(defaultAnsiColors[i]));
 }
 
+/* Flat Workbench (Amarchy flat look, owner's report "menu shows trash, only
+ * Quit visible"): SHINEPEN and SHADOWPEN share BACKGROUNDPEN's colour on
+ * purpose. Copied by role, pens 0, 1 and 2 got one colour and menu text in
+ * BARDETAILPEN vanished on the menu background. Pens 0-3 are also ANSI white,
+ * black, bright white and bright blue, which must stay apart: when the
+ * Workbench's four UI colours are not all different, none is taken. */
+static void test_menu_text_stays_visible_on_a_flat_workbench(void) {
+    static const ULONG flat[PALETTE_UI_SHARED] = { 0x1A1B26, 0x1A1B26, 0x1A1B26, 0x7AA2F7 };
+    static const ULONG shineIsFill[PALETTE_UI_SHARED] = { 0xBCBCBC, 0x000000, 0x7AA2F7, 0x7AA2F7 };
+    UBYTE pens[16];
+    ULONG out[16];
+    int i;
+
+    assert(Palette_OwnPens(APP_RENDERER_BUILTIN, 4, pens));
+    Palette_ScreenColours(defaultAnsiColors, pens, flat, out);
+    for (i = 0; i < 16; i++) assert(out[i] == Palette_RGB32(defaultAnsiColors[i]));
+    Palette_ScreenColours(defaultAnsiColors, pens, shineIsFill, out);
+    for (i = 0; i < 16; i++) assert(out[i] == Palette_RGB32(defaultAnsiColors[i]));
+}
+
 /* The own-screen tool bar's SCIcons are drawn for terminal colours 0-7 in
  * ibmcon order (7 red). Each icon pen lands on the pen of its terminal colour,
  * whatever RGB the palette gives it: red stays on the terminal's red pen, not
@@ -226,6 +246,7 @@ int main(void) {
     test_the_builtin_renderer_gets_its_own_ansi_pens_on_deep_screens();
     test_the_builtin_renderer_puts_the_ui_colours_on_pens_0_to_3_on_16_colours();
     test_the_dialogs_take_the_workbench_colours_on_16_colours();
+    test_menu_text_stays_visible_on_a_flat_workbench();
     test_the_ui_pens_are_the_nearest_ansi_colours_to_intuitions();
     test_the_editor_sees_the_renderers_palette_in_ansi_order();
     test_channels_are_the_four_bits_the_prefs_keep();

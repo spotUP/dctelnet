@@ -106,8 +106,16 @@ BOOL Palette_OwnPens(ULONG state, UWORD depth, UBYTE pens[16])
 void Palette_ScreenColours(const UWORD palette[16], const UBYTE pens[16], const ULONG ui[PALETTE_UI_SHARED],
                            ULONG out[16])
 {
-    int i;
+    int i, j;
 
+    // The shared pens are also four ANSI colours and the menu's text and
+    // background: a flat Workbench (shine and shadow in the background's
+    // colour) would merge them, so its colours are taken only when all four
+    // differ.
+    for (i = 0; ui && i < PALETTE_UI_SHARED; i++)
+        for (j = i + 1; ui && j < PALETTE_UI_SHARED; j++)
+            if (ui[i] == ui[j])
+                ui = NULL;
     for (i = 0; i < 16; i++)
         out[i] = (ui && pens[i] < PALETTE_UI_SHARED) ? ui[pens[i]] : Palette_RGB32(palette[i]);
 }
