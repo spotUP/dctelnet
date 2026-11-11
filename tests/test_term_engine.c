@@ -2733,6 +2733,57 @@ static void test_rip_bull_5_a_text_window_ends_with_the_rip_screen(void)
     }
 }
 
+/* 6. The screen a door or menu draws after its clear gets all rows. bull90 sets a RIP text window (|w, rows
+ * 13..24: scroll region and origin mode). The bulletins door then redraws in ONE write: SGR, ESC[2J ESC[H,
+ * its logo, with no RIP_RESET_WINDOWS. The auto exit used to run at the end of that write, after the logo
+ * had been laid out inside the window: the owner's half-height screen. It now runs at the clear. Also
+ * with the clear split between two writes. */
+static void test_rip_bull_6_the_screen_after_the_clear_gets_all_rows(void)
+{
+    int pass, cx, cy;
+    unsigned long leaves;
+
+    for (pass = 0; pass < 2; pass++) {
+        xterm_begin();
+        calls[0] = 0;
+        vt_put("\033c\033[2J");
+        prefs.RipMode = RIPMODE_AUTO;
+        calls[0] = 0;
+        VtApplyRip();
+        rip_bull_5_feed_bull90();
+        calls[0] = 0;
+        vt_put("Which Bulletin (?)=List, (Enter)=none? ");
+        assert(vt_rip_active(vtTerm) == 1);
+        leaves = vtRipClsLeaves;
+        calls[0] = 0;
+        if (pass == 0)
+            vt_put("\033[0m\033[37;40m\033[2J\033[HUptown Bulletins");
+        else {
+            vt_put("\033[0m\033[37;40m\033[2");
+            calls[0] = 0;
+            vt_put("J\033[HUptown Bulletins");
+        }
+        assert(vtRipClsLeaves == leaves + 1);                   /* the sentinel: the leave at the clear ran */
+        assert(vt_rip_active(vtTerm) == 0);
+        vt_cursor(vtTerm, &cx, &cy);
+        if (cy != 0 || cx != 16) {
+            printf("FAIL bull_6 pass %d: the logo after the clear ended at row %d col %d, want row 0 col 16\n",
+                   pass, cy, cx);
+            assert(0);
+        }
+        /* a clear that RIP follows in the same write keeps RIP */
+        calls[0] = 0;
+        rip_bull_5_feed_bull90();
+        assert(vt_rip_active(vtTerm) == 1);
+        leaves = vtRipClsLeaves;
+        calls[0] = 0;
+        vt_put("\033[2J\033[H\r\n!|*|c0F\r\n");                 /* RIP starts a line, as the engine wants */
+        assert(vtRipClsLeaves == leaves);
+        assert(vt_rip_active(vtTerm) == 1);
+        VtClose();
+    }
+}
+
 /* 3. Menu RIPscrip Off puts the text screen back at once, not with the next byte from the BBS. */
 static void test_rip_bull_3_menu_rip_off_leaves_rip_without_a_byte(void)
 {
@@ -3471,6 +3522,7 @@ int main(void)
     test_rip_bull_1_a_small_command_blits_only_its_dirty_rows();
     test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette();
     test_rip_bull_5_a_text_window_ends_with_the_rip_screen();
+    test_rip_bull_6_the_screen_after_the_clear_gets_all_rows();
     test_rip_bull_3_menu_rip_off_leaves_rip_without_a_byte();
     test_rip_bull_4_auto_clear_screen_without_rip_returns_to_text();
     test_rip_icons_a_1i_icon_is_read_from_the_board_folder();

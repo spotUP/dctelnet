@@ -1676,18 +1676,25 @@ static BOOL VtScrollKey(UWORD rawkey, BOOL shift)
  * last finished command are drawn by a last vt_flush, as vt_write would. */
 /* RIP Auto, back to text: AmiExpress never sends ESC[1!, so a clear screen (ESC[2J) that no RIP command
  * follows in the same write means the BBS has gone back to plain text. VtClsScan finds the clear in the
- * bytes of the RIP path (its state survives a split between writes); VtRipAutoLeave, at the end of the
- * write, drops RIP when no command came after it. RIP On stays on. */
+ * bytes of the RIP path (its state survives a split between writes). The leave has to come before the
+ * bytes after the clear are laid out: a bulletin's RIP text window (|w) is the scroll region with the
+ * origin mode on, and a screen drawn while it still holds lands in those rows only (the door's menu in
+ * the lower half of the screen, 2026-11-11). So VtFeedRip cuts the write at the clear and looks ahead:
+ * no RIP introducer in the rest of the write (VtRipFollows) leaves RIP there and then, and the rest goes
+ * in as text. With a possible introducer the old rule decides at the end of the write (VtRipAutoLeave):
+ * RIP is dropped when the engine ran no command after the clear. RIP On stays on. */
 static UBYTE vtClsState;                /* 0 ground, 1 after ESC, 2 after ESC [, 3 after ESC [ 2 */
 static BOOL vtClsPending;
 static long vtClsCmds;                  /* vt_rip_commands at the clear */
+static unsigned long vtRipClsLeaves;    /* sentinel: leaves made at the clear, before the bytes after it */
 
-static BOOL VtClsScan(const UBYTE *d, long n)
+/* The count of bytes up to and with the J of the first ESC[2J in d[0..n), 0 when there is none. */
+static long VtClsScan(const UBYTE *d, long n)
 {
-    BOOL seen = FALSE;
+    long i;
 
-    for (; n > 0; n--, d++) {
-        UBYTE b = *d;
+    for (i = 0; i < n; i++) {
+        UBYTE b = d[i];
 
         if (b == 27)
             vtClsState = 1;
@@ -1696,12 +1703,32 @@ static BOOL VtClsScan(const UBYTE *d, long n)
         else if (vtClsState == 2 && b == '2')
             vtClsState = 3;
         else if (vtClsState == 3 && b == 'J') {
-            seen = TRUE;
             vtClsState = 0;
+            return i + 1;
         } else
             vtClsState = 0;
     }
-    return seen;
+    return 0;
+}
+
+/* Can a RIP command start in d[0..n)? Its introducers are !| and SOH| / STX|; one cut off by the end of
+ * the write counts too. Deliberately wide (any column, not only a line start): a yes only puts the
+ * decision off to the end of the write, where the engine's own count of commands makes it. */
+static BOOL VtRipFollows(const UBYTE *d, long n)
+{
+    long i;
+
+    for (i = 0; i < n; i++)
+        if ((d[i] == '!' || d[i] == 1 || d[i] == 2) && (i + 1 == n || d[i + 1] == '|'))
+            return TRUE;
+    return FALSE;
+}
+
+static void VtRipLeave(void)
+{
+    vt_set_rip(vtTerm, 0);              /* drops the canvas and a |w text window; VtRipWatch (after the write)
+                                         * puts the text screen back */
+    VtApplyRipMode();                   /* Auto again: text until the BBS speaks RIP */
 }
 
 static void VtRipAutoLeave(void)
@@ -1711,8 +1738,7 @@ static void VtRipAutoLeave(void)
     vtClsPending = FALSE;
     if (!leave || !vt_rip_active(vtTerm))
         return;
-    vt_set_rip(vtTerm, 0);              /* drops the canvas; VtRipWatch (next) puts the text screen back */
-    VtApplyRipMode();                   /* Auto again: text until the BBS speaks RIP */
+    VtRipLeave();
 }
 
 /* RIP drawing is flushed once per write, not per command: the engine keeps the union of the changed area
@@ -1737,6 +1763,8 @@ static BOOL VtRipFlushDue(void)
     return TRUE;
 }
 
+static void VtFeedText(const UBYTE *data, long len);
+
 static void VtFeedRip(const UBYTE *data, long len)
 {
     long done = vt_rip_commands(vtTerm);
@@ -1752,15 +1780,24 @@ static void VtFeedRip(const UBYTE *data, long len)
         const UBYTE *lf = memchr(data, '\n', (size_t)len);
         const UBYTE *end = bar && (!lf || bar < lf) ? bar : lf;
         long n = end ? (long)(end - data) + 1 : len;
-        BOOL cls = VtClsScan(data, n);
+        long cls = VtClsScan(data, n);
 
+        if (cls)
+            n = cls;                    /* the slice ends with the clear: what follows waits for the verdict */
         vt_feed(vtTerm, data, n);
+        data += n;
+        len -= n;
         if (cls) {
+            if (Prefs_RipEngineMode(&prefs) == 2 && vt_rip_active(vtTerm) && !VtRipFollows(data, len)) {
+                vtClsPending = FALSE;
+                vtRipClsLeaves++;
+                VtRipLeave();           /* before the rest is laid out: it gets the whole text screen */
+                VtFeedText(data, len);
+                return;
+            }
             vtClsPending = TRUE;
             vtClsCmds = vt_rip_commands(vtTerm);
         }
-        data += n;
-        len -= n;
         if (vt_rip_commands(vtTerm) != done) {
             done = vt_rip_commands(vtTerm);
             if (len > 0 && VtRipFlushDue()) {
@@ -1804,6 +1841,14 @@ static void VtFeed(const UBYTE *data, long len)
         vt_write(vtTerm, data, len);
         return;
     }
+    VtFeedText(data, len);
+}
+
+/* RIP Auto, RIP not active: slices that end at each LF; a slice that turns RIP active has the rest held
+ * (or fed command by command when memory is short). Also the rest of a write after a clear that left RIP
+ * (VtFeedRip). */
+static void VtFeedText(const UBYTE *data, long len)
+{
     while (len > 0) {
         const UBYTE *lf = memchr(data, '\n', (size_t)len);
         long n = lf ? (long)(lf - data) + 1 : len;
