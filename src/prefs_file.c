@@ -200,6 +200,14 @@ BOOL Prefs_FirstRunScreen(struct PrefsStruct *p, BOOL (*ask)(void))
     return Prefs_ScreenFits(p);
 }
 
+WORD Prefs_DefaultScrollbackHeight(WORD displayHeight)
+{
+    // First run: ValidateAndInitPrefs() runs before any screen is chosen, so displayHeight is
+    // still 0 and half of it minus the title bar would be negative.
+    WORD h = (WORD)(displayHeight / 2) - 4;
+    return h < WIN_MIN_HEIGHT ? WIN_MIN_HEIGHT : h;
+}
+
 BOOL Prefs_ScreenFits(const struct PrefsStruct *p)
 {
     if (p->State & APP_RENDERER_BUILTIN)

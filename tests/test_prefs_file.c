@@ -305,8 +305,19 @@ static void test_a_cancelled_first_run_screen_requester_starts_with_the_default_
     assert(p.DisplayID == 0x00011000 && p.DisplayWidth == 800 && p.DisplayDepth == 8);
 }
 
+/* Invariant: a Scrollback window height is always >= WIN_MIN_HEIGHT. On the first run
+ * ValidateAndInitPrefs() derives it while DisplayHeight is still 0. */
+static void test_the_default_scrollback_height_is_sane_before_the_display_is_known(void)
+{
+    assert(Prefs_DefaultScrollbackHeight(0) >= WIN_MIN_HEIGHT);
+    assert(Prefs_DefaultScrollbackHeight(0) <= DISP_MAX_HEIGHT);
+    assert(Prefs_DefaultScrollbackHeight(256) == 124);
+    assert(Prefs_DefaultScrollbackHeight(1080) == 536);
+}
+
 int main(void)
 {
+    test_the_default_scrollback_height_is_sane_before_the_display_is_known();
     test_a_v2_file_round_trips();
     test_the_rip_screen_fields_round_trip_and_older_files_load_default();
     test_an_older_v2_file_loads_with_the_new_fields_zero();
