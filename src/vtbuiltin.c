@@ -684,6 +684,25 @@ static void VtImgRun(const vt_image_view *v, int a, int b, int y)
         h += sy;
         sy = 0;
     }
+    if (v->dh > 0 && v->dh != v->h && v->fmt == 0 && !v->kitty) {
+        /* a RIP canvas fitted to the screen's pixel aspect: output row oy shows picture row vt_scale_row */
+        WORD dy0 = TERM_PY(y);
+
+        if (sx >= v->w)
+            return;
+        if (w > v->w - sx)
+            w = v->w - sx;
+        for (k = 0; k < 8 && w > 0; k++) {
+            LONG oy = v->py + k;
+
+            if (oy < 0)
+                continue;
+            if (oy >= v->dh)
+                break;
+            VtImgWrite(v, sx, vt_scale_row((int)oy, v->h, v->dh), w, 1, dx, (WORD)(dy0 + k));
+        }
+        return;
+    }
     if (v->fmt != 0 || sx >= v->w || sy >= v->h)
         return;                         /* fmt 1 (RGBA) is made only when asked (vt_set_image_rgb) */
     if (w > v->w - sx)
