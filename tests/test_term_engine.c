@@ -2669,6 +2669,8 @@ static void test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette(void)
     calls[0] = 0;
     vt_put("!|a0904\r\n");                                      /* palette entry 9 changes */
     assert(vtRipPensLoads == picks + 1);                            /* a new palette: loaded again */
+    vt_put("!|Q3F3E3D3C3B3A39383736353433323130\r\n");          /* mid-stream |Q: all 16 entries change */
+    assert(vtRipPensLoads == picks + 2);                            /* |Q reloads the pens too */
     VtClose();
 }
 
