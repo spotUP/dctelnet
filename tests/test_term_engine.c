@@ -2010,6 +2010,86 @@ static void test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answer
     assert(vt_kitty_placed(vtTerm) == 1);
 }
 
+/* KG-SCROLL: a kitty picture scrolling up (the LiveChat door writes a line at the bottom of the scroll region
+ * for every step). Each damaged row used to be painted with its text cells (the black background) and the
+ * picture blitted over them, so every picture row showed black for a moment: bands moving down the picture.
+ * A cell the opaque picture covers whole is not painted under it. */
+static int kgs_text_on_picture(void)
+{
+    int i, n = 0;
+
+    for (i = 0; i < probes && i < PROBE_MAX; i++) {
+        int m;
+        const vt_cell *c = vt_row(vtTerm, probe[i].y, &m);
+
+        if (c && probe[i].x < m && (c[probe[i].x].pad & VT_CELL_IMAGE))
+            n++;
+    }
+    return n;
+}
+
+static void test_kgs_a_scrolling_opaque_picture_is_not_painted_over_its_text_cells(void)
+{
+    int step, row;
+    char buf[1024];
+
+    xterm_begin();
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    /* store the picture (80 x 80 red) and show it over 10 rows at row 3, as the door does */
+    {   /* 80 x 80 red pixels, 24-bit RGB (every pixel is "/wAA"), in chunks of 4000 characters */
+        int left = 80 * 80 * 4, first = 1;
+
+        while (left > 0) {
+            int n = left > 4000 ? 4000 : left, k;
+            char chunk[4200];
+
+            snprintf(chunk, sizeof(chunk), first ? "\033_Gf=24,s=80,v=80,a=t,i=7,q=2,m=%d;" : "\033_Gm=%d;", left > n);
+            for (k = 0; k < n; k += 4)
+                strcat(chunk, "/wAA");
+            strcat(chunk, "\033\\");
+            vt_put(chunk);
+            left -= n;
+            first = 0;
+        }
+    }
+    vt_put("\033[3;1H\033_Ga=p,i=7,c=10,r=10,C=1,q=2\033\\");
+    assert(vtImgRuns > 0);
+    for (step = 0; step < 6; step++) {
+        /* one step of the door: the log is repainted a row higher, the placement deleted, placed again */
+        probes = 0;
+        chunkyCalls = 0;
+        vtImgRuns = 0;
+        buf[0] = 0;
+        for (row = 3; row < 13; row++)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\033[%d;1Hlog line %d of the chat", row, step * 10 + row);
+        strcat(buf, "\033_Ga=d,d=i,i=7,q=2\033\\");
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\033[%d;1H\033_Ga=p,i=7,c=10,r=10,C=1,q=2\033\\", 3);
+        vtImgFills = 0;
+        vt_put(buf);
+        /* none of the 100 cells the picture covers whole is painted; the text beside it still is */
+        assert(kgs_text_on_picture() == 0);
+        {
+            int i, beside = 0;
+
+            for (i = 0; i < probes && i < PROBE_MAX; i++)
+                if (probe[i].x >= 10 && probe[i].y >= 2 && probe[i].y < 12)
+                    beside++;
+            assert(beside > 0);
+        }
+        assert(chunkyCalls + (int)vtImgFills >= 80);       /* and the picture is drawn whole */
+    }
+    {   /* the final frame: every pixel of the picture is its red */
+        int x, y;
+        UBYTE pen = chunkyFb[TERM_PY(2) * FB_W + TERM_PX(0)];
+
+        assert(pen != 0xFF);
+        for (y = 0; y < 80; y++)
+            for (x = 0; x < 80; x++)
+                assert(chunkyFb[(TERM_PY(2) + y) * FB_W + TERM_PX(0) + x] == pen);
+    }
+    VtClose();
+}
+
 /* KG-32: a kitty picture on a 5-plane palette screen with 12 free pens (pens 0-19 are DCTelnet's, PEN_EXCLUSIVE).
  * Handing the picture's palette out first-come showed the colours of its top rows only; the shared picker
  * (pic_pens.h) gives the 12 pens to the colours covering most of the picture and dithers every pixel onto
@@ -3560,6 +3640,7 @@ int main(void)
     test_ma4_3_a_scrollback_line_narrower_than_the_grid_is_blank_filled();
     test_ma4_4_the_alt_screen_leaves_the_scrollback_alone();
     test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answered();
+    test_kgs_a_scrolling_opaque_picture_is_not_painted_over_its_text_cells();
     test_kg32_a_picture_on_a_5_plane_screen_with_12_free_pens_keeps_its_colours();
     test_kg32_a_many_colour_picture_with_few_colours_on_top_keeps_its_lower_colours();
     test_sixel_32_a_many_register_picture_with_few_colours_on_top_keeps_its_lower_colours();
