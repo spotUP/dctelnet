@@ -151,6 +151,7 @@ static void Text(struct RastPort *rp, STRPTR s, ULONG n)
 #define FB_W 700
 #define FB_H 420
 static UBYTE chunkyFb[FB_W * FB_H];     /* the last pen written at each pixel, 0xFF where none */
+static unsigned long chunkyOff;         /* KG-REDRAW: pixels written with a pen other than the one there before */
 static void RectFill(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
 {
     if (!layerLocks)
@@ -163,8 +164,10 @@ static void RectFill(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
         LONG x, y;
         for (y = y0; y <= y1; y++)
             for (x = x0; x <= x1; x++)
-                if (x >= 0 && x < FB_W && y >= 0 && y < FB_H)
+                if (x >= 0 && x < FB_W && y >= 0 && y < FB_H) {
+                    chunkyOff += chunkyFb[y * FB_W + x] != rp->FgPen;
                     chunkyFb[y * FB_W + x] = rp->FgPen;
+                }
     }
 }
 /* Pictures (kitty graphics): the chunky writes, one line each with the
@@ -179,8 +182,10 @@ static void WriteChunkyPixels(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LO
     chunkyCalls++;
     for (y = y0; y <= y1; y++)
         for (x = x0; x <= x1; x++)
-            if (x >= 0 && x < FB_W && y >= 0 && y < FB_H)
+            if (x >= 0 && x < FB_W && y >= 0 && y < FB_H) {
+                chunkyOff += chunkyFb[y * FB_W + x] != a[(y - y0) * stride + (x - x0)];
                 chunkyFb[y * FB_W + x] = a[(y - y0) * stride + (x - x0)];
+            }
     call("Chunky(%ld,%ld,%ld,%ld pen%ld)\n", (long)x0, (long)y0, (long)x1, (long)y1, (long)a[0]);
 }
 static LONG WritePixelArray8(struct RastPort *rp, ULONG x0, ULONG y0, ULONG x1, ULONG y1, UBYTE *a, struct RastPort *tmp)
@@ -2010,6 +2015,86 @@ static void test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answer
     assert(vt_kitty_placed(vtTerm) == 1);
 }
 
+/* KG-SCROLL: a kitty picture scrolling up (the LiveChat door writes a line at the bottom of the scroll region
+ * for every step). Each damaged row used to be painted with its text cells (the black background) and the
+ * picture blitted over them, so every picture row showed black for a moment: bands moving down the picture.
+ * A cell the opaque picture covers whole is not painted under it. */
+static int kgs_text_on_picture(void)
+{
+    int i, n = 0;
+
+    for (i = 0; i < probes && i < PROBE_MAX; i++) {
+        int m;
+        const vt_cell *c = vt_row(vtTerm, probe[i].y, &m);
+
+        if (c && probe[i].x < m && (c[probe[i].x].pad & VT_CELL_IMAGE))
+            n++;
+    }
+    return n;
+}
+
+static void test_kgs_a_scrolling_opaque_picture_is_not_painted_over_its_text_cells(void)
+{
+    int step, row;
+    char buf[1024];
+
+    xterm_begin();
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    /* store the picture (80 x 80 red) and show it over 10 rows at row 3, as the door does */
+    {   /* 80 x 80 red pixels, 24-bit RGB (every pixel is "/wAA"), in chunks of 4000 characters */
+        int left = 80 * 80 * 4, first = 1;
+
+        while (left > 0) {
+            int n = left > 4000 ? 4000 : left, k;
+            char chunk[4200];
+
+            snprintf(chunk, sizeof(chunk), first ? "\033_Gf=24,s=80,v=80,a=t,i=7,q=2,m=%d;" : "\033_Gm=%d;", left > n);
+            for (k = 0; k < n; k += 4)
+                strcat(chunk, "/wAA");
+            strcat(chunk, "\033\\");
+            vt_put(chunk);
+            left -= n;
+            first = 0;
+        }
+    }
+    vt_put("\033[3;1H\033_Ga=p,i=7,c=10,r=10,C=1,q=2\033\\");
+    assert(vtImgRuns > 0);
+    for (step = 0; step < 6; step++) {
+        /* one step of the door: the log is repainted a row higher, the placement deleted, placed again */
+        probes = 0;
+        chunkyCalls = 0;
+        vtImgRuns = 0;
+        buf[0] = 0;
+        for (row = 3; row < 13; row++)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\033[%d;1Hlog line %d of the chat", row, step * 10 + row);
+        strcat(buf, "\033_Ga=d,d=i,i=7,q=2\033\\");
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\033[%d;1H\033_Ga=p,i=7,c=10,r=10,C=1,q=2\033\\", 3);
+        vtImgFills = 0;
+        vt_put(buf);
+        /* none of the 100 cells the picture covers whole is painted; the text beside it still is */
+        assert(kgs_text_on_picture() == 0);
+        {
+            int i, beside = 0;
+
+            for (i = 0; i < probes && i < PROBE_MAX; i++)
+                if (probe[i].x >= 10 && probe[i].y >= 2 && probe[i].y < 12)
+                    beside++;
+            assert(beside > 0);
+        }
+        assert(chunkyCalls + (int)vtImgFills >= 80);       /* and the picture is drawn whole */
+    }
+    {   /* the final frame: every pixel of the picture is its red */
+        int x, y;
+        UBYTE pen = chunkyFb[TERM_PY(2) * FB_W + TERM_PX(0)];
+
+        assert(pen != 0xFF);
+        for (y = 0; y < 80; y++)
+            for (x = 0; x < 80; x++)
+                assert(chunkyFb[(TERM_PY(2) + y) * FB_W + TERM_PX(0) + x] == pen);
+    }
+    VtClose();
+}
+
 /* KG-32: a kitty picture on a 5-plane palette screen with 12 free pens (pens 0-19 are DCTelnet's, PEN_EXCLUSIVE).
  * Handing the picture's palette out first-come showed the colours of its top rows only; the shared picker
  * (pic_pens.h) gives the 12 pens to the colours covering most of the picture and dithers every pixel onto
@@ -2033,6 +2118,84 @@ static void kg32_b64(char *out, const unsigned char *in, int n)
         *out++ = i + 2 < n ? t[v & 63] : '=';
     }
     *out = 0;
+}
+
+/* KG-REDRAW: the LiveChat door's picture (kitty-graphics.util.ts: a=t,f=100,i=N,c=,r= stored, then
+ * a=p,i=N,c=20,r=10,p=1,C=1,q=2 at a cell; a picture of any pixel size, scaled to the cells), here as opaque
+ * 32-bit RGBA of 100 x 75 (PNG decodes to the same). Redraws that do not move it: the menu bar on row 1, the input
+ * box border on rows 22-24, and the door's place again of the same placement at the same cell. Counted per redraw:
+ * text cells painted on the picture's cells, picture runs blitted, and picture pixels changed in the frame. */
+static int kgr_fb_changed(const UBYTE *snap, int col0, int row0, int wpx, int hpx)
+{
+    int x, y, n = 0;
+
+    for (y = 0; y < hpx; y++)
+        for (x = 0; x < wpx; x++) {
+            long o = (long)(TERM_PY(row0) + y) * FB_W + TERM_PX(col0) + x;
+
+            n += chunkyFb[o] != snap[o];
+        }
+    return n;
+}
+
+static void test_kgr_a_redraw_beside_a_door_picture_does_not_repaint_it(void)
+{
+    static unsigned char raw[100 * 75 * 4];
+    static char b64[sizeof(raw) / 3 * 4 + 8], msg[4200];
+    static UBYTE snap[sizeof(chunkyFb)];
+    int i, n, off, step;
+    const char *redraw[3];
+
+    xterm_begin_on(5, 0);                       /* native chipset: 5 planes, 12 pens free for the picture's picker */
+    assert(vtTrueColour && vtPicPens);
+    obtainBudget = 12;
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    for (i = 0; i < 100 * 75; i++) {       /* an opaque photo-like ramp */
+        raw[i * 4] = (unsigned char)(i % 100 * 2);
+        raw[i * 4 + 1] = (unsigned char)(i / 100 * 3);
+        raw[i * 4 + 2] = (unsigned char)(255 - i % 100 * 2);
+        raw[i * 4 + 3] = 255;
+    }
+    kg32_b64(b64, raw, (int)sizeof(raw));
+    n = (int)strlen(b64);
+    for (off = 0; off < n; off += 4000) {
+        int take = n - off > 4000 ? 4000 : n - off;
+
+        if (!off)
+            snprintf(msg, sizeof(msg), "\033_Ga=t,f=32,s=100,v=75,i=1,c=20,r=10,q=2,m=%d;", off + take < n);
+        else
+            snprintf(msg, sizeof(msg), "\033_Gm=%d;", off + take < n);
+        strncat(msg, b64 + off, (size_t)take);
+        strcat(msg, "\033\\");
+        calls[0] = 0;                           /* Text() logs every run unchecked */
+        vt_put(msg);
+    }
+    calls[0] = 0;
+    vt_put("\033[8;25H\033_Ga=p,i=1,c=20,r=10,p=1,C=1,q=2\033\\");
+    assert(vtImgRuns > 0);
+    redraw[0] = "\033[1;1H\033[1;37;44m File  Rooms  Users  Help \033[0m\033[1;60H\033[33m*\033[0m";
+    redraw[1] = "\033[22;1H\033[36m+----------\033[22;12H----------+\033[23;1H|\033[23;74H|\033[24;1H+--------+\033[0m";
+    redraw[2] = "\033[8;25H\033_Ga=p,i=1,c=20,r=10,p=1,C=1,q=2\033\\";
+    for (step = 0; step < 3; step++) {
+        int text, runs, changed;
+
+        memcpy(snap, chunkyFb, sizeof(chunkyFb));
+        probes = 0;
+        vtImgRuns = 0;
+        vtImgFills = 0;
+        chunkyOff = 0;
+        calls[0] = 0;
+        vt_put(redraw[step]);
+        text = kgs_text_on_picture();
+        runs = (int)vtImgRuns + (int)vtImgFills;
+        changed = kgr_fb_changed(snap, 24, 7, 20 * 8, 10 * 8);
+        printf("KG-REDRAW step %d: text cells on picture %d, picture runs %d, picture pixels changed %d, pixels written off-picture %lu\n", step,
+               text, runs, changed, chunkyOff);
+        assert(chunkyOff == 0);
+        assert(text == 0);
+        assert(changed == 0);
+    }
+    VtClose();
 }
 
 static const unsigned char kg32_bars[8][3] = {
@@ -2448,6 +2611,56 @@ static void test_rip_a_write_of_many_commands_flushes_once(void)
         TimerBase = NULL;
         assert(vtRipFlushes - f0 > 2);
     }
+}
+
+/* RIP-SLOW-2: a RIP canvas fitted to a 1:2 pixel-aspect screen (the scaled path of VtImgRun) is blitted in few
+ * VtImgWrite runs, one per cell row, not one per output pixel row. The frame hash pins the output pixels. */
+static unsigned long fbHash(void)
+{
+    unsigned long h = 2166136261UL;
+    int i;
+
+    for (i = 0; i < FB_W * FB_H; i++)
+        h = (h ^ chunkyFb[i]) * 16777619UL;
+    return h;
+}
+
+#define RIPSLOW2_HASH 12495468438034373417UL
+#define RIPSLOW2_MAXRUNS 40
+static void test_rip_slow_2_a_scaled_canvas_is_blitted_in_batches(void)
+{
+    static char buf[40000];
+    int i, n = 0;
+    unsigned long runs0;
+    int calls0;
+
+    modeRx = 22; modeRy = 44;
+    xterm_begin();
+    vt_put("\033c\033[2J");
+    prefs.RipMode = RIPMODE_ON;
+    VtApplyRip();
+    vt_put("\033[2!\r\n");
+    memset(chunkyFb, 0xFF, sizeof(chunkyFb));
+    n += sprintf(buf + n, "!|S0109|B00000S2S");        /* the whole canvas: every row dirty */
+    for (i = 0; i < 1500; i++)
+        n += sprintf(buf + n, "|S01%c%c|B%02d%02d%02d%02d", "0123456789ABCDEF"[i % 16] == '0' ? '1' : "0123456789ABCDEF"[i % 16],
+                     '0', (i * 7) % 60, (i * 3) % 30, (i * 7) % 60 + 9, (i * 3) % 30 + 9);
+    n += sprintf(buf + n, "\r\n");
+    chunkyCalls = 0;
+    runs0 = vtImgRuns;
+    calls0 = chunkyCalls;
+    VtWrite((const UBYTE *)buf, n);
+    {
+        vt_image_view v;
+        assert(vt_row_image(vtTerm, 0, 0, &v) == 1);
+        assert(v.dh > 0 && v.dh != v.h);               /* the scaled path is the one under test */
+        if (getenv("RIPSLOW_PRINT"))
+            fprintf(stderr, "dh=%d runs=%lu chunky=%d hash=%lu\n", (int)v.dh, vtImgRuns - runs0, chunkyCalls - calls0, fbHash());
+    }
+    assert(fbHash() == RIPSLOW2_HASH);
+    assert(vtImgRuns - runs0 <= RIPSLOW2_MAXRUNS);      /* was 248: one run per output pixel row */
+    modeRx = 0; modeRy = 0;
+    xterm_begin();
 }
 
 /* RIP palette entry 0 is a real colour: set non-black, the canvas pixels of
@@ -3510,6 +3723,8 @@ int main(void)
     test_ma4_3_a_scrollback_line_narrower_than_the_grid_is_blank_filled();
     test_ma4_4_the_alt_screen_leaves_the_scrollback_alone();
     test_kg8_a_kitty_picture_through_vtwrite_is_drawn_and_a_query_answered();
+    test_kgs_a_scrolling_opaque_picture_is_not_painted_over_its_text_cells();
+    test_kgr_a_redraw_beside_a_door_picture_does_not_repaint_it();
     test_kg32_a_picture_on_a_5_plane_screen_with_12_free_pens_keeps_its_colours();
     test_kg32_a_many_colour_picture_with_few_colours_on_top_keeps_its_lower_colours();
     test_sixel_32_a_many_register_picture_with_few_colours_on_top_keeps_its_lower_colours();
@@ -3518,6 +3733,7 @@ int main(void)
     test_rip_index_0_is_the_palette_colour_not_the_background();
     test_rip_colour_index_is_the_exact_ega_colour_with_a_custom_ansi_palette();
     test_rip_a_write_of_many_commands_flushes_once();
+    test_rip_slow_2_a_scaled_canvas_is_blitted_in_batches();
     test_rip_h3_the_ripscrip_preference_reaches_the_engine();
     test_rip_bull_1_a_small_command_blits_only_its_dirty_rows();
     test_rip_bull_2_the_canvas_pens_are_picked_once_per_palette();

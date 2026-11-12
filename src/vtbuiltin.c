@@ -574,8 +574,9 @@ static int VtImgSpans(const VtImgFlat *fl, int n, int k, LONG w, WORD *sp)
     return ns;
 }
 
-/* w x h pixels of v from (sx, sy) to RastPort pixel (dx, dy). */
-static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h, WORD dx, WORD dy)
+/* w x h pixels of v to RastPort pixel (dx, dy): output row k shows picture row rows[k] (a RIP canvas fitted to the
+ * screen's pixel aspect skips or repeats rows); rows NULL: picture rows sy to sy + h - 1. Columns from sx. */
+static void VtImgWriteRows(const vt_image_view *v, LONG sx, LONG sy, const LONG *rows, LONG w, LONG h, WORD dx, WORD dy)
 {
     LONG stride = (w + 15) & ~15L;      /* WritePixelArray8 wants rows of 16 */
     LONG k, j;
@@ -592,21 +593,27 @@ static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h,
         return;
     VtImgColours(v);
     {   /* row pointers advance by addition: no per-row multiply (about 200 cycles each) */
-        const vt_u8 *src = v->pix + sy * v->w + sx;
+        const vt_u8 *src = v->pix + (rows ? rows[0] : sy) * v->w + sx;
         UBYTE *d = vtImgBuf;
         for (k = 0; k < h; k++) {
+            LONG yy = sy + k;           /* the picture row of output row k (dither phase and RGB follow it) */
+
+            if (rows) {
+                yy = rows[k];
+                src = v->pix + yy * v->w + sx;
+            }
             if (vtPicCur && vtPicCur->indexed) {
                 const pp_plan *pl = (const pp_plan *)(vtPicCur->mem + sizeof(pm_palette));
 
                 for (j = 0; j < w; j++)
-                    d[j] = src[j] ? (UBYTE)pp_pen_at(pl, src[j], (int)(sx + j), (int)(sy + k)) : vtImgMap[0];
+                    d[j] = src[j] ? (UBYTE)pp_pen_at(pl, src[j], (int)(sx + j), (int)yy) : vtImgMap[0];
             } else if (vtPicCur) {
                 UBYTE *plan3 = vtPicCur->mem + sizeof(pm_palette), *bc = plan3 + PP_BINS * 3;
-                const UBYTE *px = v->rgb + ((sy + k) * v->w + sx) * 3;
+                const UBYTE *px = v->rgb + (yy * v->w + sx) * 3;
 
                 for (j = 0; j < w; j++)
                     d[j] = src[j] ? vtPicCur->cpen[pp_pen_bin(plan3, bc, (pm_palette *)vtPicCur->mem, vtPicCur->usable,
-                                                              px + j * 3, (int)(sx + j), (int)(sy + k))]
+                                                              px + j * 3, (int)(sx + j), (int)yy)]
                                   : vtImgMap[0];
             } else {
                 VtImgMapRow(vtImgMap, src, d, (UWORD)w);
@@ -666,6 +673,12 @@ static void VtImgBlit(struct RastPort *rp, WORD dx, WORD dy, LONG w, LONG h, con
     }
 }
 
+/* w x h pixels of v from (sx, sy) to RastPort pixel (dx, dy). */
+static void VtImgWrite(const vt_image_view *v, LONG sx, LONG sy, LONG w, LONG h, WORD dx, WORD dy)
+{
+    VtImgWriteRows(v, sx, sy, NULL, w, h, dx, dy);
+}
+
 /* Cells [a, b) of screen row y show picture v. A kitty picture's index 0
  * is transparent: only the runs of the pixels that paint go out. */
 static void VtImgRun(const vt_image_view *v, int a, int b, int y)
@@ -692,14 +705,22 @@ static void VtImgRun(const vt_image_view *v, int a, int b, int y)
             return;
         if (w > v->w - sx)
             w = v->w - sx;
-        for (k = 0; k < 8 && w > 0; k++) {
-            LONG oy = v->py + k;
+        {   /* the cell row's output rows in one write: rows[] maps each to its picture row */
+            LONG rows[8], n = 0, first = -1;
 
-            if (oy < 0)
-                continue;
-            if (oy >= v->dh)
-                break;
-            VtImgWrite(v, sx, vt_scale_row((int)oy, v->h, v->dh), w, 1, dx, (WORD)(dy0 + k));
+            for (k = 0; k < 8 && w > 0; k++) {
+                LONG oy = v->py + k;
+
+                if (oy < 0)
+                    continue;
+                if (oy >= v->dh)
+                    break;
+                if (first < 0)
+                    first = k;
+                rows[n++] = vt_scale_row((int)oy, v->h, v->dh);
+            }
+            if (n > 0)
+                VtImgWriteRows(v, sx, 0, rows, w, n, dx, (WORD)(dy0 + first));
         }
         return;
     }
@@ -857,6 +878,57 @@ static BOOL VtRowOnCanvas(int gy)
     return FALSE;
 }
 
+/* Cell columns of a row that an opaque kitty picture drawn over the text (z >= 0) covers whole: VtDrawImages
+ * paints every pixel of them, so the text pass need not blank them first. That blank (black background), then the
+ * blit, showed on screen for as long as the blit took: black bands moving down a picture the door scrolls (it
+ * repaints the log and places the picture again for every step, so every picture row is damaged). */
+#define VT_COVER_MAX 4
+typedef struct {
+    int n;
+    int a[VT_COVER_MAX], b[VT_COVER_MAX];       /* cells [a, b) */
+} VtCover;
+
+static BOOL VtCellCovered(const vt_image_view *v, int x)
+{
+    int cw = 1 << term_xs, k, j;
+    LONG sx = (LONG)(x - v->col0) * v->cw - v->px0;
+    const vt_u8 *p;
+
+    if (sx < 0 || sx + cw > v->w || v->py < 0 || v->py + 8 > v->h)
+        return FALSE;                   /* an edge cell: part of it is not the picture's */
+    p = v->pix + (LONG)v->py * v->w + sx;
+    for (k = 0; k < 8; k++, p += v->w)
+        for (j = 0; j < cw; j++)
+            if (!p[j])
+                return FALSE;           /* a transparent pixel: the text under it shows */
+    return TRUE;
+}
+
+static void VtRowCover(int gy, const vt_cell *c, int n, VtCover *cv)
+{
+    vt_image_view v;
+    int i, x, xe;
+
+    cv->n = 0;
+    for (i = 0; vt_row_image(vtTerm, gy, i, &v); i++) {
+        if (!v.kitty || v.fmt != 0 || v.z < 0 || (v.dh > 0 && v.dh != v.h))
+            continue;
+        xe = v.col0 + (v.px0 + v.w + v.cw - 1) / v.cw;
+        if (xe > n)
+            xe = n;
+        for (x = v.col0 > 0 ? v.col0 : 0; x < xe && cv->n < VT_COVER_MAX; x++) {
+            int a = x;
+
+            while (x < xe && (c[x].pad & VT_CELL_IMAGE) && VtCellCovered(&v, x))
+                x++;
+            if (x > a) {
+                cv->a[cv->n] = a;
+                cv->b[cv->n++] = x;
+            }
+        }
+    }
+}
+
 /* Draw cells x0 <= x < x1 of rows y0 <= y < y1 from the grid. */
 static void VtDraw(void *user, int x0, int y0, int x1, int y1)
 {
@@ -872,6 +944,12 @@ static void VtDraw(void *user, int x0, int y0, int x1, int y1)
         BOOL onCanvas = !term_cursor_paint && vt_images(vtTerm) && VtImgRp() && VtRowOnCanvas(y - vtScrollOff) &&
                         (vtScrollOff || !vt_row_size(vtTerm, y));
 
+        VtCover cover;
+        int ci = 0;
+
+        cover.n = 0;
+        if (!term_cursor_paint && vt_images(vtTerm) && VtImgRp() && (vtScrollOff || !vt_row_size(vtTerm, y)))
+            VtRowCover(y - vtScrollOff, c, n, &cover);
         cur_y = (WORD)y;
         term_sync_row_base();
         for (x = x0; x < x1 && x < n; x++) {
@@ -882,6 +960,11 @@ static void VtDraw(void *user, int x0, int y0, int x1, int y1)
 
             if (onCanvas && (c[x].pad & VT_CELL_UNDER))
                 continue;               /* the canvas is blitted over this cell (VtDrawImages) */
+            for (ci = 0; ci < cover.n; ci++)
+                if (x >= cover.a[ci] && x < cover.b[ci])
+                    break;
+            if (ci < cover.n)
+                continue;               /* an opaque picture is blitted over this cell (VtDrawImages) */
             /* Blink is never animated (no timer; the owner's decision, MA1-7
              * exemption). With iCE colours on (BLINK_ICE) the engine turns
              * blink on a dark background into the bright background; with
